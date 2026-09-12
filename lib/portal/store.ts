@@ -231,3 +231,174 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * MOCK RESULTS GENERATION
+ * ─────────────────────────────────────────────────────────────────
+ * There's no computer-vision pipeline behind this demo, so box scores
+ * and tagged clips are generated deterministically from the project's
+ * own roster and id (same project always produces the same "results" —
+ * it just isn't re-randomized on every render). Replace with real
+ * annotation output once a backend exists.
+ */
+
+export type PlayerBoxScore = {
+  number: string;
+  name: string;
+  pts: number;
+  reb: number;
+  ast: number;
+  stl: number;
+  blk: number;
+  tov: number;
+  fgm: number;
+  fga: number;
+  tpm: number;
+  tpa: number;
+};
+
+export type TaggedClip = {
+  id: string;
+  label: string;
+  time: string;
+  player: string;
+  confidence: number;
+};
+
+export type ProjectResults = {
+  team: PlayerBoxScore[];
+  opponent?: PlayerBoxScore[];
+  clips: TaggedClip[];
+};
+
+function seededRandom(seed: string) {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function next() {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  };
+}
+
+function genPlayerStats(p: RosterPlayer, rand: () => number): PlayerBoxScore {
+  const fga = 4 + Math.floor(rand() * 12);
+  const fgm = Math.min(fga, Math.round(fga * (0.32 + rand() * 0.28)));
+  const tpa = Math.floor(rand() * 7);
+  const tpm = Math.min(tpa, Math.round(tpa * (0.2 + rand() * 0.3)));
+  const ftBonus = Math.floor(rand() * 6);
+
+  // fgm/fga are ALL field goals (2s and 3s combined, standard box-score
+  // convention), with tpm/tpa the 3-point subset. Points = 2pt makes*2 +
+  // 3pt makes*3 = (fgm-tpm)*2 + tpm*3, which simplifies to fgm*2 + tpm.
+  return {
+    number: p.number,
+    name: p.name,
+    pts: fgm * 2 + tpm + ftBonus,
+    reb: Math.floor(rand() * 11),
+    ast: Math.floor(rand() * 9),
+    stl: Math.floor(rand() * 4),
+    blk: Math.floor(rand() * 3),
+    tov: Math.floor(rand() * 5),
+    fgm,
+    fga,
+    tpm,
+    tpa,
+  };
+}
+
+const EVENT_POOL = [
+  "SHOT ATTEMPT",
+  "3PT MADE",
+  "REBOUND",
+  "ASSIST",
+  "STEAL",
+  "BLOCK",
+  "TURNOVER",
+  "FOUL",
+];
+
+function genClips(project: Project, rand: () => number): TaggedClip[] {
+  const players = [...project.roster, ...(project.opponentRoster ?? [])];
+  if (players.length === 0) return [];
+
+  const periods = project.format === "Halves" ? ["1H", "2H"] : ["Q1", "Q2", "Q3", "Q4"];
+  const count = 6 + Math.floor(rand() * 5);
+  const clips: TaggedClip[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const player = players[Math.floor(rand() * players.length)];
+    const period = periods[Math.floor(rand() * periods.length)];
+    const minutes = String(Math.floor(rand() * 12)).padStart(2, "0");
+    const seconds = String(Math.floor(rand() * 60)).padStart(2, "0");
+    clips.push({
+      id: `clip-${i}`,
+      label: EVENT_POOL[Math.floor(rand() * EVENT_POOL.length)],
+      time: `${period} ${minutes}:${seconds}`,
+      player: `#${player.number} ${player.name}`,
+      confidence: Math.round((90 + rand() * 9.5) * 10) / 10,
+    });
+  }
+
+  return clips;
+}
+
+export function getProjectResults(project: Project): ProjectResults {
+  const rand = seededRandom(project.id);
+  const team = project.roster.map((p) => genPlayerStats(p, rand));
+  const opponent =
+    project.opponentRoster && project.opponentRoster.length > 0
+      ? project.opponentRoster.map((p) => genPlayerStats(p, rand))
+      : undefined;
+  const clips = genClips(project, rand);
+  return { team, opponent, clips };
+}
+
+export function teamTotals(players: PlayerBoxScore[]) {
+  const sum = (key: keyof PlayerBoxScore) =>
+    players.reduce((acc, p) => acc + (typeof p[key] === "number" ? (p[key] as number) : 0), 0);
+  const fgm = sum("fgm");
+  const fga = sum("fga");
+  const tpm = sum("tpm");
+  const tpa = sum("tpa");
+
+  return {
+    pts: sum("pts"),
+    reb: sum("reb"),
+    ast: sum("ast"),
+    stl: sum("stl"),
+    blk: sum("blk"),
+    tov: sum("tov"),
+    fgm,
+    fga,
+    tpm,
+    tpa,
+    fgPct: fga > 0 ? Math.round((fgm / fga) * 1000) / 10 : 0,
+    tpPct: tpa > 0 ? Math.round((tpm / tpa) * 1000) / 10 : 0,
+  };
+}
+
+export function toCsv(headers: string[], rows: (string | number)[][]): string {
+  const escape = (v: string | number) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return [headers, ...rows].map((row) => row.map(escape).join(",")).join("\n");
+}
+
+export function downloadCsv(filename: string, csv: string) {
+  if (!isBrowser()) return;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
