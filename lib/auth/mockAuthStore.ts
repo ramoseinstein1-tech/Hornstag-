@@ -170,3 +170,58 @@ export async function authenticateUser(input: {
 
   return { ok: true, user: toSessionUser(user) };
 }
+
+export async function updateProfileName(userId: string, name: string): Promise<AuthResult> {
+  const trimmed = name.trim();
+  if (trimmed.length < 2) {
+    return { ok: false, error: "Enter your full name." };
+  }
+
+  const users = getUsers();
+  const idx = users.findIndex((u) => u.id === userId);
+  if (idx === -1) return { ok: false, error: "Account not found." };
+
+  users[idx] = { ...users[idx], name: trimmed };
+  saveUsers(users);
+
+  const updated = toSessionUser(users[idx]);
+  // Keep the active session's cached copy in sync so the UI (sidebar,
+  // dashboard greeting) reflects the change immediately, not just after
+  // the next sign-in.
+  const current = getSession();
+  if (current && current.id === userId && isBrowser()) {
+    const persisted = window.localStorage.getItem(SESSION_STORAGE_KEY) !== null;
+    setSession(updated, persisted);
+  }
+
+  return { ok: true, user: updated };
+}
+
+export async function changePassword(
+  userId: string,
+  input: { currentPassword: string; newPassword: string }
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const users = getUsers();
+  const idx = users.findIndex((u) => u.id === userId);
+  if (idx === -1) return { ok: false, error: "Account not found." };
+
+  const user = users[idx];
+  const currentHash = await hashPassword(input.currentPassword, user.salt);
+  if (currentHash !== user.passwordHash) {
+    return { ok: false, error: "Current password is incorrect." };
+  }
+
+  const newSalt = randomSalt();
+  const newHash = await hashPassword(input.newPassword, newSalt);
+  users[idx] = { ...user, salt: newSalt, passwordHash: newHash };
+  saveUsers(users);
+
+  return { ok: true };
+}
+
+/** Permanently removes the account record. Does NOT clear the session or
+ * this user's project/billing data — callers should also call
+ * clearSession() and the portal/billing deleteUserData() helpers. */
+export function deleteAccount(userId: string) {
+  saveUsers(getUsers().filter((u) => u.id !== userId));
+}

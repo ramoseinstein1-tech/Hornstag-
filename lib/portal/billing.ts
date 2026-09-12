@@ -136,6 +136,11 @@ export function getBilling(userId: string): BillingData {
   return readBilling(userId);
 }
 
+export function deleteUserData(userId: string) {
+  if (!isBrowser()) return;
+  window.localStorage.removeItem(key(userId));
+}
+
 export function changePlan(userId: string, tier: PlanTier): BillingData {
   const data = readBilling(userId);
   data.planTier = tier;

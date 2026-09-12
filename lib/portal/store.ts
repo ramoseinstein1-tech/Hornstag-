@@ -166,6 +166,11 @@ export function getActivity(userId: string): ActivityEntry[] {
   return readData(userId).activity;
 }
 
+export function deleteUserData(userId: string) {
+  if (!isBrowser()) return;
+  window.localStorage.removeItem(key(userId));
+}
+
 export function createProject(
   userId: string,
   input: {
