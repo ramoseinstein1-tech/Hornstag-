@@ -47,7 +47,11 @@ type PortalData = {
   activity: ActivityEntry[];
 };
 
-const KEY_PREFIX = "hornstag_portal_";
+// Bumped to v2 when the Project shape changed (level/priority ->
+// scope/format/roster). Bump again any time Project's shape changes in a
+// way older stored records won't satisfy — old keys are simply orphaned
+// and harmless, and everyone gets fresh, correctly-shaped seed data.
+const KEY_PREFIX = "hornstag_portal_v2_";
 
 function isBrowser() {
   return typeof window !== "undefined";
@@ -118,11 +122,29 @@ function seedData(): PortalData {
   };
 }
 
+function isValidShape(data: unknown): data is PortalData {
+  if (!data || typeof data !== "object") return false;
+  const { projects } = data as PortalData;
+  if (!Array.isArray(projects)) return false;
+  // Spot-check the first record against the current Project shape so a
+  // schema change we forgot to version-bump self-heals instead of
+  // crashing the page on a missing field.
+  return projects.every(
+    (p) =>
+      typeof p.scope === "string" &&
+      typeof p.format === "string" &&
+      Array.isArray(p.roster)
+  );
+}
+
 function readData(userId: string): PortalData {
   if (!isBrowser()) return { projects: [], activity: [] };
   try {
     const raw = window.localStorage.getItem(key(userId));
-    if (raw) return JSON.parse(raw) as PortalData;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (isValidShape(parsed)) return parsed;
+    }
   } catch {
     // Corrupt data — fall through and reseed.
   }
