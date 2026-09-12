@@ -83,6 +83,7 @@ html {
   background: var(--background);
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
+  color-scheme: dark;
 }
 
 @media (prefers-reduced-motion: reduce) {
