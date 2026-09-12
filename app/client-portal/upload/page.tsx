@@ -5,18 +5,96 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { createProject, formatFileSize } from "@/lib/portal/store";
-import type { ProjectPriority } from "@/lib/portal/store";
+import type { AnnotationScope, GameFormat, RosterPlayer } from "@/lib/portal/store";
 
-const LEVELS = [
-  "Youth",
-  "High School",
-  "College",
-  "Semi-Pro",
-  "Professional",
-  "Other",
-];
+type Errors = Partial<Record<"name" | "file" | "roster" | "opponentRoster", string>>;
 
-type Errors = Partial<Record<"name" | "file", string>>;
+const emptyPlayer = (): RosterPlayer => ({ number: "", name: "" });
+
+function RosterEditor({
+  label,
+  players,
+  onChange,
+  error,
+}: {
+  label: string;
+  players: RosterPlayer[];
+  onChange: (players: RosterPlayer[]) => void;
+  error?: string;
+}) {
+  function updatePlayer(index: number, field: keyof RosterPlayer, value: string) {
+    onChange(players.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
+  }
+
+  function removePlayer(index: number) {
+    onChange(players.length > 1 ? players.filter((_, i) => i !== index) : [emptyPlayer()]);
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <span className="hs-label !mb-0">{label}</span>
+        <span className="font-mono-tech text-[0.6rem] tracking-[0.1em] text-text-faint">
+          {players.filter((p) => p.number.trim() && p.name.trim()).length} PLAYER
+          {players.filter((p) => p.number.trim() && p.name.trim()).length === 1 ? "" : "S"}
+        </span>
+      </div>
+
+      <div className="mt-2 flex flex-col gap-2">
+        {players.map((p, i) => (
+          <div key={i} className="flex gap-2">
+            {/* Width is controlled on these wrapper divs, not the inputs
+                themselves — .hs-input sets width:100% as unlayered CSS,
+                which beats Tailwind's layered w-16/flex-1 utilities if
+                applied directly to the input. */}
+            <div className="w-16 flex-none">
+              <input
+                className="hs-input text-center"
+                placeholder="#"
+                inputMode="numeric"
+                maxLength={3}
+                value={p.number}
+                onChange={(e) => updatePlayer(i, "number", e.target.value)}
+                aria-label={`${label} player ${i + 1} jersey number`}
+              />
+            </div>
+            <div className="flex-1">
+              <input
+                className="hs-input"
+                placeholder="Player name"
+                value={p.name}
+                onChange={(e) => updatePlayer(i, "name", e.target.value)}
+                aria-label={`${label} player ${i + 1} name`}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => removePlayer(i)}
+              aria-label="Remove player"
+              className="flex h-[42px] w-10 flex-none items-center justify-center rounded-md border border-border text-text-faint transition-colors duration-300 hover:border-[#ff6b6b]/40 hover:text-[#ff6b6b]"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {error && (
+        <p className="mt-2 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">
+          {error}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => onChange([...players, emptyPlayer()])}
+        className="mt-3 flex items-center gap-2 font-mono-tech text-[0.66rem] tracking-[0.14em] text-orange-bright transition-colors hover:text-orange"
+      >
+        + ADD PLAYER
+      </button>
+    </div>
+  );
+}
 
 export default function UploadProjectPage() {
   const { user } = useAuth();
@@ -26,8 +104,10 @@ export default function UploadProjectPage() {
   const [name, setName] = useState("");
   const [opponent, setOpponent] = useState("");
   const [gameDate, setGameDate] = useState("");
-  const [level, setLevel] = useState(LEVELS[2]);
-  const [priority, setPriority] = useState<ProjectPriority>("Standard");
+  const [scope, setScope] = useState<AnnotationScope>("Single Team");
+  const [format, setFormat] = useState<GameFormat>("Quarters");
+  const [roster, setRoster] = useState<RosterPlayer[]>([emptyPlayer()]);
+  const [opponentRoster, setOpponentRoster] = useState<RosterPlayer[]>([emptyPlayer()]);
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -43,6 +123,17 @@ export default function UploadProjectPage() {
     const next: Errors = {};
     if (name.trim().length < 2) next.name = "Give the project a name.";
     if (!file) next.file = "Attach a game film to continue.";
+
+    const validRoster = roster.filter((p) => p.number.trim() && p.name.trim());
+    if (validRoster.length === 0) {
+      next.roster = "Add at least one player to the roster.";
+    }
+    if (scope === "Both Teams") {
+      const validOpponentRoster = opponentRoster.filter((p) => p.number.trim() && p.name.trim());
+      if (validOpponentRoster.length === 0) {
+        next.opponentRoster = "Add at least one opponent roster player.";
+      }
+    }
     return next;
   }
 
@@ -60,8 +151,13 @@ export default function UploadProjectPage() {
       name: name.trim(),
       opponent: opponent.trim() || undefined,
       gameDate: gameDate || undefined,
-      level,
-      priority,
+      scope,
+      format,
+      roster: roster.filter((p) => p.number.trim() && p.name.trim()),
+      opponentRoster:
+        scope === "Both Teams"
+          ? opponentRoster.filter((p) => p.number.trim() && p.name.trim())
+          : undefined,
       notes: notes.trim() || undefined,
       fileName: file!.name,
       fileSize: formatFileSize(file!.size),
@@ -107,6 +203,8 @@ export default function UploadProjectPage() {
                 setGameDate("");
                 setNotes("");
                 setFile(null);
+                setRoster([emptyPlayer()]);
+                setOpponentRoster([emptyPlayer()]);
               }}
               className="hs-btn-secondary flex-1"
             >
@@ -179,43 +277,71 @@ export default function UploadProjectPage() {
 
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           <div>
-            <label htmlFor="proj-level" className="hs-label">
-              COMPETITION LEVEL
-            </label>
-            <select
-              id="proj-level"
-              className="hs-input"
-              value={level}
-              onChange={(e) => setLevel(e.target.value)}
-            >
-              {LEVELS.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <span className="hs-label">TURNAROUND</span>
+            <span className="hs-label">ANNOTATION SCOPE</span>
             <div className="grid grid-cols-2 gap-2">
-              {(["Standard", "Rush"] as ProjectPriority[]).map((p) => (
+              {(["Single Team", "Both Teams"] as AnnotationScope[]).map((s) => (
                 <button
-                  key={p}
+                  key={s}
                   type="button"
-                  onClick={() => setPriority(p)}
+                  onClick={() => setScope(s)}
                   className={`rounded-md border px-4 py-[0.62rem] text-sm font-medium transition-all duration-300 ${
-                    priority === p
+                    scope === s
                       ? "border-orange/50 bg-orange/10 text-orange-bright"
                       : "border-border bg-transparent text-text-muted hover:border-border-strong"
                   }`}
                 >
-                  {p}
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="hs-label">GAME FORMAT</span>
+            <div className="grid grid-cols-2 gap-2">
+              {(["Quarters", "Halves"] as GameFormat[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFormat(f)}
+                  className={`rounded-md border px-4 py-[0.62rem] text-sm font-medium transition-all duration-300 ${
+                    format === f
+                      ? "border-orange/50 bg-orange/10 text-orange-bright"
+                      : "border-border bg-transparent text-text-muted hover:border-border-strong"
+                  }`}
+                >
+                  By {f}
                 </button>
               ))}
             </div>
           </div>
         </div>
+
+        <RosterEditor
+          label={scope === "Both Teams" ? "YOUR TEAM ROSTER" : "TEAM ROSTER"}
+          players={roster}
+          onChange={setRoster}
+          error={errors.roster}
+        />
+
+        <AnimatePresence initial={false}>
+          {scope === "Both Teams" && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+              className="overflow-hidden"
+            >
+              <RosterEditor
+                label="OPPONENT ROSTER"
+                players={opponentRoster}
+                onChange={setOpponentRoster}
+                error={errors.opponentRoster}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div>
           <label className="hs-label">GAME FILM</label>

@@ -10,15 +10,23 @@
  */
 
 export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed";
-export type ProjectPriority = "Standard" | "Rush";
+export type AnnotationScope = "Single Team" | "Both Teams";
+export type GameFormat = "Quarters" | "Halves";
+
+export type RosterPlayer = {
+  number: string;
+  name: string;
+};
 
 export type Project = {
   id: string;
   name: string;
   opponent?: string;
   gameDate?: string;
-  level?: string;
-  priority: ProjectPriority;
+  scope: AnnotationScope;
+  format: GameFormat;
+  roster: RosterPlayer[];
+  opponentRoster?: RosterPlayer[];
   notes?: string;
   fileName?: string;
   fileSize?: string;
@@ -58,7 +66,18 @@ function seedData(): PortalData {
       {
         id: "seed-1",
         name: "Hawks vs. Celtics — Full Game",
-        priority: "Standard",
+        opponent: "vs. Celtics",
+        scope: "Both Teams",
+        format: "Quarters",
+        roster: [
+          { number: "23", name: "J. Carter" },
+          { number: "11", name: "D. Nguyen" },
+          { number: "04", name: "M. Osei" },
+        ],
+        opponentRoster: [
+          { number: "7", name: "T. Brooks" },
+          { number: "15", name: "R. Silva" },
+        ],
         status: "In Progress",
         progress: 62,
         createdAt: hoursAgo(30),
@@ -67,7 +86,12 @@ function seedData(): PortalData {
       {
         id: "seed-2",
         name: "U18 Regional Semifinal",
-        priority: "Standard",
+        scope: "Single Team",
+        format: "Halves",
+        roster: [
+          { number: "32", name: "A. Patel" },
+          { number: "09", name: "K. Reyes" },
+        ],
         status: "Needs Review",
         progress: 100,
         createdAt: hoursAgo(48),
@@ -76,7 +100,9 @@ function seedData(): PortalData {
       {
         id: "seed-3",
         name: "Scouting Reel — G. Martinez",
-        priority: "Rush",
+        scope: "Single Team",
+        format: "Quarters",
+        roster: [{ number: "05", name: "G. Martinez" }],
         status: "Completed",
         progress: 100,
         createdAt: hoursAgo(96),
@@ -124,8 +150,10 @@ export function createProject(
     name: string;
     opponent?: string;
     gameDate?: string;
-    level?: string;
-    priority: ProjectPriority;
+    scope: AnnotationScope;
+    format: GameFormat;
+    roster: RosterPlayer[];
+    opponentRoster?: RosterPlayer[];
     notes?: string;
     fileName?: string;
     fileSize?: string;
@@ -139,8 +167,10 @@ export function createProject(
     name: input.name,
     opponent: input.opponent,
     gameDate: input.gameDate,
-    level: input.level,
-    priority: input.priority,
+    scope: input.scope,
+    format: input.format,
+    roster: input.roster,
+    opponentRoster: input.opponentRoster,
     notes: input.notes,
     fileName: input.fileName,
     fileSize: input.fileSize,
