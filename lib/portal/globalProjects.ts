@@ -30,6 +30,10 @@ export type GlobalProjectEntry = {
   createdAt: string;
   claimedBy?: { annotatorId: string; annotatorName: string; claimedAt: string };
   annotationStatus: GlobalAnnotationStatus;
+  /** Optional note the annotator leaves when submitting for review — e.g.
+   * explaining a score discrepancy. Set by lib/portal/pipeline.ts's
+   * submitForReview, shown to the admin on the QA review page. */
+  submissionNote?: string;
 };
 
 const GLOBAL_KEY = "hornstag_global_projects_v1";
@@ -129,6 +133,14 @@ export function setAnnotationStatus(projectId: string, status: GlobalAnnotationS
   const idx = entries.findIndex((e) => e.projectId === projectId);
   if (idx === -1) return;
   entries[idx] = { ...entries[idx], annotationStatus: status };
+  writeIndex(entries);
+}
+
+export function setSubmissionNote(projectId: string, note: string | undefined): void {
+  const entries = readIndex();
+  const idx = entries.findIndex((e) => e.projectId === projectId);
+  if (idx === -1) return;
+  entries[idx] = { ...entries[idx], submissionNote: note };
   writeIndex(entries);
 }
 

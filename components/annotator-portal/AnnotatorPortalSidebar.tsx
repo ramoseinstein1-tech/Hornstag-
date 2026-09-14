@@ -140,15 +140,23 @@ export default function AnnotatorPortalSidebar({
   user,
   mobileOpen,
   onClose,
+  collapsed,
 }: {
   user: SessionUser;
   mobileOpen: boolean;
   onClose: () => void;
+  collapsed: boolean;
 }) {
   return (
     <>
-      <aside className="hidden border-r border-border bg-surface lg:block">
-        <SidebarContent user={user} onNavigate={onClose} />
+      <aside
+        className={`hidden overflow-hidden bg-surface lg:block ${
+          collapsed ? "border-r-0" : "border-r border-border"
+        }`}
+      >
+        <div className="w-[260px]">
+          <SidebarContent user={user} onNavigate={onClose} />
+        </div>
       </aside>
 
       <AnimatePresence>

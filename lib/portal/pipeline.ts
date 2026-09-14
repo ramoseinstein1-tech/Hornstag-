@@ -26,6 +26,7 @@ import {
   claimProject as claimGlobalProject,
   unclaimProject as unclaimGlobalProject,
   setAnnotationStatus,
+  setSubmissionNote,
   type GlobalAnnotationStatus,
   type GlobalProjectEntry,
 } from "./globalProjects";
@@ -67,9 +68,12 @@ export function claimForAnnotation(
 
 /** Annotator: Claimed -> In Review ("Submit for Review"). Submission is a
  * one-way door from the annotator's side — only an admin can move it from
- * here (approve, or send back), matching the QA-owns-completion model. */
-export function submitForReview(ownerId: string, projectId: string): void {
+ * here (approve, or send back), matching the QA-owns-completion model.
+ * `note` is optional free text the annotator can leave for QA — e.g. to
+ * explain a score discrepancy — shown on the admin review page. */
+export function submitForReview(ownerId: string, projectId: string, note?: string): void {
   transition(ownerId, projectId, "In Review");
+  setSubmissionNote(projectId, note && note.trim() ? note.trim() : undefined);
 }
 
 /** Admin only: In Review -> Completed. This is the moment real annotated

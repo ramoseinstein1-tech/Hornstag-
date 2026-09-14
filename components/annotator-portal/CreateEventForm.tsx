@@ -66,12 +66,14 @@ export default function CreateEventForm({
   editingEvent,
   onSave,
   onCancelEdit,
+  activeSegmentLabel,
 }: {
   project: Project;
   currentTimeSeconds: number;
   editingEvent: AnnotationEvent | null;
   onSave: (input: NewEventInput) => { ok: boolean; error?: string };
   onCancelEdit: () => void;
+  activeSegmentLabel?: string;
 }) {
   const bothTeams = project.scope === "Both Teams";
 
@@ -167,9 +169,14 @@ export default function CreateEventForm({
   return (
     <form onSubmit={handleSubmit} className="hs-panel sheen-top flex flex-col gap-4 p-5">
       <div className="flex items-center justify-between">
-        <p className="font-mono-tech text-[0.6rem] tracking-[0.16em] text-text-faint">
-          {editingEvent ? "EDIT EVENT" : "CREATE EVENT"}
-        </p>
+        <div className="flex items-center gap-2.5">
+          <p className="font-mono-tech text-[0.6rem] tracking-[0.16em] text-text-faint">
+            {editingEvent ? "EDIT EVENT" : "CREATE EVENT"}
+          </p>
+          {activeSegmentLabel && (
+            <span className="hs-chip !py-0.5 !text-[0.56rem]">TAGGING: {activeSegmentLabel}</span>
+          )}
+        </div>
         {editingEvent && (
           <button
             type="button"

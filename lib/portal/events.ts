@@ -63,6 +63,12 @@ export type AnnotationEvent = {
   shotLocation?: ShotLocation;
   /** Only used when eventType === "custom". */
   customLabel?: string;
+  /** Which segment (e.g. "Q2", "H1") this timestamp falls in — derived
+   * from lib/portal/segments.ts's periodForTimestamp() at save time, not
+   * from whichever segment the annotator had selected in the UI, so it's
+   * always correct even if they tag while scrubbed outside that range.
+   * Undefined if the video hadn't been segmented yet when this was saved. */
+  period?: string;
   createdAt: string;
   updatedAt: string;
 };

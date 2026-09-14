@@ -84,8 +84,15 @@ export default function EventsList({
                 onClick={() => onSeek(evt.timestampSeconds)}
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
               >
-                <span className="font-mono-tech text-[0.62rem] tracking-[0.06em] text-orange-bright">
-                  {formatTimestamp(evt.timestampSeconds)}
+                <span className="flex flex-none flex-col items-center">
+                  <span className="font-mono-tech text-[0.62rem] tracking-[0.06em] text-orange-bright">
+                    {formatTimestamp(evt.timestampSeconds)}
+                  </span>
+                  {evt.period && (
+                    <span className="font-mono-tech text-[0.52rem] tracking-[0.06em] text-text-faint">
+                      {evt.period}
+                    </span>
+                  )}
                 </span>
                 <div className="min-w-0">
                   <p className="truncate text-sm text-text">

@@ -13,7 +13,7 @@ import {
   type AnnotationEvent,
   type NewEventInput,
 } from "@/lib/portal/events";
-import { getSegments, saveSegments, type VideoSegment } from "@/lib/portal/segments";
+import { getSegments, saveSegments, periodForTimestamp, type VideoSegment } from "@/lib/portal/segments";
 import VideoPlayer, { type VideoPlayerHandle } from "./VideoPlayer";
 import EventsTimeline from "./EventsTimeline";
 import CreateEventForm from "./CreateEventForm";
@@ -21,6 +21,7 @@ import EventsList from "./EventsList";
 import LiveStatsPanel from "./LiveStatsPanel";
 import RosterManager from "./RosterManager";
 import SegmentVideo from "./SegmentVideo";
+import SegmentStepper from "./SegmentStepper";
 
 const SAMPLE_VIDEO_SRC = "/annotator-sample.mp4";
 
@@ -50,6 +51,7 @@ export default function AnnotationWorkspace({
   const [duration, setDuration] = useState(0);
   const [editingEvent, setEditingEvent] = useState<AnnotationEvent | null>(null);
   const [tab, setTab] = useState<Tab>(segments ? "annotate" : "segments");
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
 
   // "Claimed" is the only status this workspace is ever reached with while
   // still editable — once submitted ("In Review") or QA'd ("Completed"),
@@ -79,16 +81,25 @@ export default function AnnotationWorkspace({
   function handleSaveSegments(newSegments: VideoSegment[]) {
     saveSegments(currentProject.id, newSegments);
     setSegments(newSegments);
+    setActiveSegmentIndex(0);
     setTab("annotate");
   }
 
+  function handleSelectSegment(index: number) {
+    if (!segments) return;
+    setActiveSegmentIndex(index);
+    handleSeek(segments[index].startSeconds);
+  }
+
   function handleSave(input: NewEventInput): { ok: boolean; error?: string } {
+    const period = segments ? periodForTimestamp(segments, input.timestampSeconds) : undefined;
+    const enrichedInput: NewEventInput = { ...input, period };
     if (editingEvent) {
-      const result = updateEvent(currentProject.id, editingEvent.id, input);
+      const result = updateEvent(currentProject.id, editingEvent.id, enrichedInput);
       if (result.ok) setEvents(getEvents(currentProject.id));
       return result;
     }
-    const result = createEvent(currentProject.id, input);
+    const result = createEvent(currentProject.id, enrichedInput);
     if (result.ok) setEvents(getEvents(currentProject.id));
     return result;
   }
@@ -202,6 +213,12 @@ export default function AnnotationWorkspace({
             {tab === "annotate" && (
               segments ? (
                 <>
+                  <SegmentStepper
+                    segments={segments}
+                    activeIndex={activeSegmentIndex}
+                    events={events}
+                    onSelect={handleSelectSegment}
+                  />
                   {readOnly ? (
                     <div className="hs-panel p-5 text-center text-sm text-text-muted">{lockedMessage}</div>
                   ) : (
@@ -211,6 +228,7 @@ export default function AnnotationWorkspace({
                       editingEvent={editingEvent}
                       onSave={handleSave}
                       onCancelEdit={() => setEditingEvent(null)}
+                      activeSegmentLabel={segments[activeSegmentIndex]?.label}
                     />
                   )}
                   <EventsList

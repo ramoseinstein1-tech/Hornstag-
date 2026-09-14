@@ -70,3 +70,16 @@ export function deleteProjectSegments(projectId: string): void {
   if (!isBrowser()) return;
   window.localStorage.removeItem(key(projectId));
 }
+
+/** Which period a timestamp falls in, derived from the real boundaries —
+ * not from whichever segment button the annotator last clicked, so a tag
+ * is always attributed correctly even if they scrub outside the segment
+ * they're focused on. Falls back to the last segment for anything at or
+ * past its start (covers the exact end-of-video edge case). */
+export function periodForTimestamp(segments: VideoSegment[], timestampSeconds: number): string | undefined {
+  for (const seg of segments) {
+    if (timestampSeconds >= seg.startSeconds && timestampSeconds < seg.endSeconds) return seg.label;
+  }
+  const last = segments[segments.length - 1];
+  return last && timestampSeconds >= last.startSeconds ? last.label : undefined;
+}

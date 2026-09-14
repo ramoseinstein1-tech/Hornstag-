@@ -25,6 +25,8 @@ const COLUMNS: Column[] = [
 export default function AnnotatorTasksPage() {
   const { user } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
 
   const rows: Row[] = useMemo(() => {
     if (!user) return [];
@@ -38,8 +40,14 @@ export default function AnnotatorTasksPage() {
 
   if (!user) return null;
 
-  function handleSubmit(ownerId: string, projectId: string) {
-    submitForReview(ownerId, projectId);
+  function handleSubmit(row: Row) {
+    submitForReview(row.entry.ownerId, row.entry.projectId, noteDrafts[row.entry.projectId]);
+    setNoteDrafts((prev) => {
+      const next = { ...prev };
+      delete next[row.entry.projectId];
+      return next;
+    });
+    setExpandedNoteId(null);
     setRefreshKey((k) => k + 1);
   }
 
@@ -86,6 +94,24 @@ export default function AnnotatorTasksPage() {
                       </p>
                     )}
 
+                    {col.status !== "Claimed" && row.entry.submissionNote && (
+                      <p className="mt-2 rounded-md border border-border bg-surface/60 p-2 text-xs leading-relaxed text-text-muted">
+                        <span className="font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">YOUR NOTE: </span>
+                        {row.entry.submissionNote}
+                      </p>
+                    )}
+
+                    {col.status === "Claimed" && expandedNoteId === row.entry.projectId && (
+                      <textarea
+                        className="hs-input mt-2 min-h-[60px] resize-y !text-xs"
+                        placeholder="Notes for QA (optional) — e.g. explain a score discrepancy"
+                        value={noteDrafts[row.entry.projectId] ?? ""}
+                        onChange={(e) =>
+                          setNoteDrafts((prev) => ({ ...prev, [row.entry.projectId]: e.target.value }))
+                        }
+                      />
+                    )}
+
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <Link
                         href={`/annotator-portal/matches/${row.entry.projectId}`}
@@ -94,12 +120,23 @@ export default function AnnotatorTasksPage() {
                         OPEN →
                       </Link>
                       {col.status === "Claimed" && (
-                        <button
-                          onClick={() => handleSubmit(row.entry.ownerId, row.entry.projectId)}
-                          className="ml-auto hs-btn-secondary !px-2.5 !py-1 !text-[0.58rem]"
-                        >
-                          SEND TO REVIEW
-                        </button>
+                        <>
+                          {expandedNoteId !== row.entry.projectId && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedNoteId(row.entry.projectId)}
+                              className="ml-auto font-mono-tech text-[0.58rem] tracking-[0.08em] text-text-faint hover:text-orange-bright"
+                            >
+                              + ADD NOTE
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleSubmit(row)}
+                            className={`hs-btn-secondary !px-2.5 !py-1 !text-[0.58rem] ${expandedNoteId === row.entry.projectId ? "ml-auto" : ""}`}
+                          >
+                            SEND TO REVIEW
+                          </button>
+                        </>
                       )}
                       {col.status === "In Review" && (
                         <span className="ml-auto font-mono-tech text-[0.58rem] tracking-[0.08em] text-text-faint">

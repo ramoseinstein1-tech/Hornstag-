@@ -85,6 +85,15 @@ export default function AdminProjectReviewPage({
         {segments ? " · VIDEO SEGMENTED" : " · VIDEO NOT YET SEGMENTED"}
       </p>
 
+      {entry.submissionNote && (
+        <div className="hs-panel mt-4 p-4" style={{ borderColor: "var(--border-orange)" }}>
+          <p className="mb-1.5 font-mono-tech text-[0.58rem] tracking-[0.14em] text-orange-bright">
+            ANNOTATOR NOTE
+          </p>
+          <p className="text-sm leading-relaxed text-text-muted">{entry.submissionNote}</p>
+        </div>
+      )}
+
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="flex flex-col gap-4">
           <VideoPlayer
