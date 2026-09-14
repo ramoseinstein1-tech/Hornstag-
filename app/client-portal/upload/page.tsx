@@ -169,7 +169,7 @@ export default function UploadProjectPage() {
     setUploadError(null);
     setStatus("submitting");
 
-    const project = await createProject(user.id, {
+    const createResult = await createProject(user.id, {
       name: name.trim(),
       opponent: opponent.trim() || undefined,
       gameDate: gameDate || undefined,
@@ -186,11 +186,12 @@ export default function UploadProjectPage() {
       officialScore: { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) },
     }, user.name);
 
-    if (!project) {
-      setUploadError("Couldn't create the project — try again.");
+    if (!createResult.ok) {
+      setUploadError(createResult.error);
       setStatus("idle");
       return;
     }
+    const project = createResult.project;
 
     const uploadResult = await uploadProjectVideo(project.id, file!);
     if (!uploadResult.ok) {

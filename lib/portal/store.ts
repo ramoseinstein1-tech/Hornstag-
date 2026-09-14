@@ -309,7 +309,7 @@ export async function createProject(
     officialScore: OfficialScore;
   },
   ownerName: string
-): Promise<Project | null> {
+): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
   const supabase = createClient();
 
   const { data: projectRow, error } = await supabase
@@ -331,7 +331,10 @@ export async function createProject(
     .select()
     .single();
 
-  if (error || !projectRow) return null;
+  if (error || !projectRow) {
+    console.error("createProject failed:", error);
+    return { ok: false, error: error?.message ?? "Unknown error creating project." };
+  }
 
   if (input.roster.length > 0) {
     await supabase.from("roster_players").insert(
@@ -346,7 +349,9 @@ export async function createProject(
 
   await addActivity(userId, `Uploaded new game film: "${input.name}"`);
 
-  return getProject(projectRow.id);
+  const project = await getProject(projectRow.id);
+  if (!project) return { ok: false, error: "Project was created but couldn't be re-fetched." };
+  return { ok: true, project };
 }
 
 export function formatRelativeTime(iso: string): string {
