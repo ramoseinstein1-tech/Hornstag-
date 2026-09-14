@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { getProject, type Project } from "@/lib/portal/store";
+import { getProject, getProjectVideoUrl, type Project } from "@/lib/portal/store";
 import { getEvents, pointsForEvent, type AnnotationEvent } from "@/lib/portal/events";
 import { getSegments, type VideoSegment } from "@/lib/portal/segments";
 import { approveAndComplete, sendBackToAnnotator, reopenForReview } from "@/lib/portal/pipeline";
@@ -22,6 +22,7 @@ export default function AdminProjectReviewPage({
   const [project, setProject] = useState<Project | null | undefined>(undefined);
   const [events, setEvents] = useState<AnnotationEvent[]>([]);
   const [segments, setSegments] = useState<VideoSegment[] | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
   async function refresh() {
     const [p, evts, segs] = await Promise.all([
@@ -32,6 +33,7 @@ export default function AdminProjectReviewPage({
     setProject(p);
     setEvents(evts);
     setSegments(segs);
+    if (p) setVideoUrl(await getProjectVideoUrl(p));
   }
 
   useEffect(() => {
@@ -103,11 +105,13 @@ export default function AdminProjectReviewPage({
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="flex flex-col gap-4">
-          <VideoPlayer
-            ref={videoRef}
-            src="/annotator-sample.mp4"
-            onDurationChange={setDuration}
-          />
+          {videoUrl ? (
+            <VideoPlayer ref={videoRef} src={videoUrl} onDurationChange={setDuration} />
+          ) : (
+            <div className="hs-panel flex aspect-video items-center justify-center text-sm text-text-faint">
+              Loading video…
+            </div>
+          )}
           <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} segments={segments} />
         </div>
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { updateRoster, type AnnotationStatus, type Project, type RosterPlayer } from "@/lib/portal/store";
+import { updateRoster, getProjectVideoUrl, type AnnotationStatus, type Project, type RosterPlayer } from "@/lib/portal/store";
 import {
   createEvent,
   deleteEvent,
@@ -21,8 +21,6 @@ import LiveStatsPanel from "./LiveStatsPanel";
 import RosterManager from "./RosterManager";
 import SegmentVideo from "./SegmentVideo";
 import SegmentStepper from "./SegmentStepper";
-
-const SAMPLE_VIDEO_SRC = "/annotator-sample.mp4";
 
 type Tab = "segments" | "annotate" | "stats" | "roster";
 
@@ -44,6 +42,7 @@ export default function AnnotationWorkspace({
   const [currentProject, setCurrentProject] = useState<Project>(project);
   const [events, setEvents] = useState<AnnotationEvent[]>([]);
   const [segments, setSegments] = useState<VideoSegment[] | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [editingEvent, setEditingEvent] = useState<AnnotationEvent | null>(null);
@@ -56,6 +55,7 @@ export default function AnnotationWorkspace({
       setSegments(s);
       setTab(s ? "annotate" : "segments");
     });
+    getProjectVideoUrl(project).then(setVideoUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
@@ -156,10 +156,12 @@ export default function AnnotationWorkspace({
           ` · TAG TOWARD THE OFFICIAL SCORE — QA CHECKS THAT YOUR TAGGED EVENTS ADD UP TO ${currentProject.officialScore.team}–${currentProject.officialScore.opponent} BEFORE APPROVING`}
       </p>
 
-      <p className="mt-3 max-w-xl text-xs leading-relaxed text-text-faint">
-        This demo doesn&rsquo;t store the project&rsquo;s real uploaded footage — every
-        workspace plays a shared sample clip so you can test tagging end-to-end.
-      </p>
+      {!currentProject.videoPath && (
+        <p className="mt-3 max-w-xl text-xs leading-relaxed text-text-faint">
+          No real footage was uploaded for this project — playing a shared sample clip
+          so you can still test tagging end-to-end.
+        </p>
+      )}
 
       <div className="mt-8 flex gap-1.5 border-b border-border">
         {tabs.map((t) => {
@@ -196,12 +198,18 @@ export default function AnnotationWorkspace({
       {(tab === "segments" || tab === "annotate") && (
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
           <div className="flex flex-col gap-4">
-            <VideoPlayer
-              ref={videoRef}
-              src={SAMPLE_VIDEO_SRC}
-              onTimeUpdate={setCurrentTime}
-              onDurationChange={setDuration}
-            />
+            {videoUrl ? (
+              <VideoPlayer
+                ref={videoRef}
+                src={videoUrl}
+                onTimeUpdate={setCurrentTime}
+                onDurationChange={setDuration}
+              />
+            ) : (
+              <div className="hs-panel flex aspect-video items-center justify-center text-sm text-text-faint">
+                Loading video…
+              </div>
+            )}
             <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} segments={segments} />
           </div>
 

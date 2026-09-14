@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { createProject, formatFileSize, officialOutcome } from "@/lib/portal/store";
+import { createProject, formatFileSize, officialOutcome, uploadProjectVideo } from "@/lib/portal/store";
 import type { AnnotationScope, GameFormat, RosterPlayer } from "@/lib/portal/store";
 
 type Errors = Partial<
@@ -12,6 +12,11 @@ type Errors = Partial<
 >;
 
 const emptyPlayer = (): RosterPlayer => ({ id: crypto.randomUUID(), number: "", name: "" });
+
+// Supabase's free tier hard-caps individual uploads at 50MB regardless of
+// bucket settings — checked client-side here for instant feedback instead
+// of a failed round-trip after the rest of the form is already submitted.
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 function RosterEditor({
   label,
@@ -117,6 +122,7 @@ export default function UploadProjectPage() {
   const [dragActive, setDragActive] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [status, setStatus] = useState<"idle" | "submitting" | "done">("idle");
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   function handleFile(f: File | null) {
     setFile(f);
@@ -127,6 +133,9 @@ export default function UploadProjectPage() {
     const next: Errors = {};
     if (name.trim().length < 2) next.name = "Give the project a name.";
     if (!file) next.file = "Attach a game film to continue.";
+    else if (file.size > MAX_UPLOAD_BYTES) {
+      next.file = "Files must be under 50MB while we're on Supabase's free tier — full game-length uploads unlock once we upgrade.";
+    }
 
     const validRoster = roster.filter((p) => p.number.trim() && p.name.trim());
     if (validRoster.length === 0) {
@@ -157,9 +166,10 @@ export default function UploadProjectPage() {
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
+    setUploadError(null);
     setStatus("submitting");
 
-    await createProject(user.id, {
+    const project = await createProject(user.id, {
       name: name.trim(),
       opponent: opponent.trim() || undefined,
       gameDate: gameDate || undefined,
@@ -175,6 +185,23 @@ export default function UploadProjectPage() {
       fileSize: formatFileSize(file!.size),
       officialScore: { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) },
     }, user.name);
+
+    if (!project) {
+      setUploadError("Couldn't create the project — try again.");
+      setStatus("idle");
+      return;
+    }
+
+    const uploadResult = await uploadProjectVideo(project.id, file!);
+    if (!uploadResult.ok) {
+      // The project row already exists at this point — it just falls back
+      // to the shared sample clip in the workspace until the video is
+      // retried. Surface the failure clearly rather than pretending it
+      // succeeded.
+      setUploadError(uploadResult.error);
+      setStatus("idle");
+      return;
+    }
 
     setStatus("done");
   }
@@ -242,6 +269,25 @@ export default function UploadProjectPage() {
         Submit new game film for annotation. It&rsquo;ll appear on your
         dashboard immediately with a &ldquo;Processing&rdquo; status.
       </p>
+
+      <AnimatePresence>
+        {uploadError && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto" }}
+            exit={{ opacity: 0, y: -8, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mt-6 overflow-hidden"
+          >
+            <div className="flex items-start gap-2.5 rounded-md border border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.06] px-4 py-3">
+              <span className="mt-0.5 text-[#ff6b6b]">⚠</span>
+              <p className="font-mono-tech text-[0.68rem] leading-relaxed tracking-wide text-[#ff9b9b]">
+                {uploadError}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <form onSubmit={handleSubmit} noValidate className="mt-10 flex flex-col gap-6">
         <div>

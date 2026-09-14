@@ -3,10 +3,10 @@
  * ─────────────────────────────────────────────────────────────────
  * Replaces the old localStorage mock. Projects, roster, and activity now
  * live in Postgres (see supabase/migrations/00000000000000_init.sql) with
- * Row Level Security enforcing who can see/edit what. Uploaded video
- * files still aren't actually stored anywhere yet (Phase 2 of the
- * backend migration) — only the file's name/size are recorded so the UI
- * can show something real.
+ * Row Level Security enforcing who can see/edit what. Uploaded video files
+ * live in the private `project-videos` Storage bucket (see
+ * supabase/migrations/00000000000003_video_storage.sql), keyed by project
+ * id — see uploadProjectVideo/getProjectVideoUrl below.
  *
  * The claim/assignment fields that used to live in a separate
  * lib/portal/globalProjects.ts "global index" (a workaround for
@@ -54,6 +54,7 @@ export type Project = {
   notes?: string;
   fileName?: string;
   fileSize?: string;
+  videoPath?: string;
   status: ProjectStatus;
   progress: number;
   officialScore?: OfficialScore;
@@ -86,6 +87,7 @@ type ProjectRow = {
   notes: string | null;
   file_name: string | null;
   file_size: string | null;
+  video_path: string | null;
   status: ProjectStatus;
   progress: number;
   official_score_team: number | null;
@@ -123,6 +125,7 @@ function mapProjectRow(row: ProjectRow): Project {
     notes: row.notes ?? undefined,
     fileName: row.file_name ?? undefined,
     fileSize: row.file_size ?? undefined,
+    videoPath: row.video_path ?? undefined,
     status: row.status,
     progress: row.progress,
     officialScore:
@@ -159,6 +162,65 @@ export async function getProject(projectId: string): Promise<Project | null> {
   const { data, error } = await supabase.from("projects").select(PROJECT_SELECT).eq("id", projectId).single();
   if (error || !data) return null;
   return mapProjectRow(data as unknown as ProjectRow);
+}
+
+const VIDEO_BUCKET = "project-videos";
+/** The shared placeholder every workspace played before Phase 2 — still
+ * the fallback for any project with no real video attached (pre-Phase-2
+ * demo projects, or one whose upload never completed). */
+const SAMPLE_VIDEO_SRC = "/annotator-sample.mp4";
+
+function videoStoragePath(projectId: string, fileName: string): string {
+  const ext = fileName.includes(".") ? fileName.split(".").pop() : "mp4";
+  return `${projectId}/source.${ext}`;
+}
+
+/**
+ * Uploads a project's real game film to the private `project-videos`
+ * bucket (supabase/migrations/00000000000003_video_storage.sql) and
+ * records its path on the project row. A separate step from
+ * createProject because Storage's RLS policies key off the project's id
+ * already existing in the projects table — the row has to exist first.
+ *
+ * Supabase's free tier hard-caps uploads at 50MB regardless of this
+ * bucket's own file_size_limit; that error is translated into a message
+ * that explains why, rather than surfacing Supabase's raw wording.
+ */
+export async function uploadProjectVideo(
+  projectId: string,
+  file: File
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = createClient();
+  const path = videoStoragePath(projectId, file.name);
+
+  const { error: uploadError } = await supabase.storage.from(VIDEO_BUCKET).upload(path, file, {
+    upsert: true,
+    contentType: file.type || "video/mp4",
+  });
+  if (uploadError) {
+    const message = /maximum allowed size|exceeded the maximum/i.test(uploadError.message)
+      ? "This file is over the current 50MB upload limit (a Supabase free-tier cap) — try a shorter clip for now."
+      : uploadError.message;
+    return { ok: false, error: message };
+  }
+
+  const { error: updateError } = await supabase.from("projects").update({ video_path: path }).eq("id", projectId);
+  if (updateError) return { ok: false, error: updateError.message };
+
+  return { ok: true };
+}
+
+/** A playable URL for a project's video — a real signed URL if it has
+ * one uploaded, otherwise the shared sample clip fallback. Centralized
+ * here so every place that plays a project's video (annotator workspace,
+ * admin QA review) applies the same fallback rule. */
+export async function getProjectVideoUrl(project: Project): Promise<string> {
+  if (!project.videoPath) return SAMPLE_VIDEO_SRC;
+
+  const supabase = createClient();
+  const { data, error } = await supabase.storage.from(VIDEO_BUCKET).createSignedUrl(project.videoPath, 3600);
+  if (error || !data) return SAMPLE_VIDEO_SRC;
+  return data.signedUrl;
 }
 
 /** Every project visible to the CALLER's role — for a client, just their
