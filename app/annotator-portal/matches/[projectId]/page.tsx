@@ -44,6 +44,9 @@ export default function MatchWorkspacePage({
         <h1 className="font-display text-xl font-semibold tracking-tight text-text">
           {project.name}
         </h1>
+        <p className="mt-2 font-mono-tech text-[0.6rem] tracking-[0.14em] text-orange-bright">
+          TRACKED BY {project.format.toUpperCase()}
+        </p>
         <p className="mt-3 text-sm leading-relaxed text-text-muted">
           {entry.annotationStatus === "Unclaimed"
             ? "Claim this match to start annotating."

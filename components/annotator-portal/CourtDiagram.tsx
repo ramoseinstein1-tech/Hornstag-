@@ -21,7 +21,10 @@ const KEY_HEIGHT = 160;
 const FT_CIRCLE_R = 60;
 const CENTER_CIRCLE_R = 70;
 const THREE_R = 215;
-const THREE_PHI_MAX = 1.3;
+// Was 1.3, which put the corner-three lines only ~3px from the sideline —
+// too tight to click a shot location inside the actual corner pocket.
+// 1.05 opens up a real clickable gap there.
+const THREE_PHI_MAX = 1.05;
 const LINE = "rgba(245,242,234,0.5)";
 const ACCENT = "rgba(255,106,0,0.6)";
 

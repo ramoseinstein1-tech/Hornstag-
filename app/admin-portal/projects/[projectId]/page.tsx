@@ -5,6 +5,7 @@ import Link from "next/link";
 import { getProjects } from "@/lib/portal/store";
 import { getGlobalProjectByProjectId } from "@/lib/portal/globalProjects";
 import { getEvents, pointsForEvent } from "@/lib/portal/events";
+import { getSegments } from "@/lib/portal/segments";
 import { approveAndComplete, sendBackToAnnotator, reopenForReview } from "@/lib/portal/pipeline";
 import VideoPlayer, { type VideoPlayerHandle } from "@/components/annotator-portal/VideoPlayer";
 import EventsTimeline from "@/components/annotator-portal/EventsTimeline";
@@ -38,6 +39,7 @@ export default function AdminProjectReviewPage({
   }
 
   const events = getEvents(project.id);
+  const segments = getSegments(project.id);
   const ownerId = entry.ownerId;
   const taggedTeamScore = events.filter((e) => e.teamSide === "team").reduce((sum, e) => sum + pointsForEvent(e), 0);
   const taggedOpponentScore = events
@@ -77,9 +79,10 @@ export default function AdminProjectReviewPage({
         <span className="hs-chip">{entry.annotationStatus.toUpperCase()}</span>
       </div>
       <p className="mt-1 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
-        OWNER {entry.ownerName.toUpperCase()}
+        OWNER {entry.ownerName.toUpperCase()} · {project.format.toUpperCase()}
         {entry.claimedBy && ` · ANNOTATED BY ${entry.claimedBy.annotatorName.toUpperCase()}`}
         {` · ${events.length} EVENTS`}
+        {segments ? " · VIDEO SEGMENTED" : " · VIDEO NOT YET SEGMENTED"}
       </p>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
@@ -89,7 +92,7 @@ export default function AdminProjectReviewPage({
             src="/annotator-sample.mp4"
             onDurationChange={setDuration}
           />
-          <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} />
+          <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} segments={segments} />
         </div>
 
         <div className="flex flex-col gap-6">

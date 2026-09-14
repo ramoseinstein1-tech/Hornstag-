@@ -13,18 +13,21 @@ import {
   type AnnotationEvent,
   type NewEventInput,
 } from "@/lib/portal/events";
+import { getSegments, saveSegments, type VideoSegment } from "@/lib/portal/segments";
 import VideoPlayer, { type VideoPlayerHandle } from "./VideoPlayer";
 import EventsTimeline from "./EventsTimeline";
 import CreateEventForm from "./CreateEventForm";
 import EventsList from "./EventsList";
 import LiveStatsPanel from "./LiveStatsPanel";
 import RosterManager from "./RosterManager";
+import SegmentVideo from "./SegmentVideo";
 
 const SAMPLE_VIDEO_SRC = "/annotator-sample.mp4";
 
-type Tab = "annotate" | "stats" | "roster";
+type Tab = "segments" | "annotate" | "stats" | "roster";
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: "segments", label: "SEGMENTS" },
   { key: "annotate", label: "ANNOTATE" },
   { key: "stats", label: "LIVE STATS" },
   { key: "roster", label: "ROSTER" },
@@ -42,10 +45,11 @@ export default function AnnotationWorkspace({
   const videoRef = useRef<VideoPlayerHandle>(null);
   const [currentProject, setCurrentProject] = useState<Project>(project);
   const [events, setEvents] = useState<AnnotationEvent[]>(() => getEvents(project.id));
+  const [segments, setSegments] = useState<VideoSegment[] | null>(() => getSegments(project.id));
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [editingEvent, setEditingEvent] = useState<AnnotationEvent | null>(null);
-  const [tab, setTab] = useState<Tab>("annotate");
+  const [tab, setTab] = useState<Tab>(segments ? "annotate" : "segments");
 
   // "Claimed" is the only status this workspace is ever reached with while
   // still editable — once submitted ("In Review") or QA'd ("Completed"),
@@ -56,7 +60,7 @@ export default function AnnotationWorkspace({
     annotationStatus === "Completed"
       ? "This match has been reviewed and completed — no further edits."
       : "Submitted for review — no further edits until QA responds.";
-  const tabs = readOnly ? TABS.filter((t) => t.key !== "roster") : TABS;
+  const tabs = readOnly ? TABS.filter((t) => t.key !== "roster" && t.key !== "segments") : TABS;
 
   const teamScore = useMemo(
     () => events.filter((e) => e.teamSide === "team").reduce((sum, e) => sum + pointsForEvent(e), 0),
@@ -70,6 +74,12 @@ export default function AnnotationWorkspace({
   function handleSeek(seconds: number) {
     videoRef.current?.seekTo(seconds);
     setCurrentTime(seconds);
+  }
+
+  function handleSaveSegments(newSegments: VideoSegment[]) {
+    saveSegments(currentProject.id, newSegments);
+    setSegments(newSegments);
+    setTab("annotate");
   }
 
   function handleSave(input: NewEventInput): { ok: boolean; error?: string } {
@@ -123,11 +133,11 @@ export default function AnnotationWorkspace({
         </div>
       </div>
 
-      {currentProject.officialScore && (
-        <p className="mt-2 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
-          TAG TOWARD THE OFFICIAL SCORE — QA CHECKS THAT YOUR TAGGED EVENTS ADD UP TO {currentProject.officialScore.team}–{currentProject.officialScore.opponent} BEFORE APPROVING
-        </p>
-      )}
+      <p className="mt-2 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
+        {currentProject.format.toUpperCase()} GAME
+        {currentProject.officialScore &&
+          ` · TAG TOWARD THE OFFICIAL SCORE — QA CHECKS THAT YOUR TAGGED EVENTS ADD UP TO ${currentProject.officialScore.team}–${currentProject.officialScore.opponent} BEFORE APPROVING`}
+      </p>
 
       <p className="mt-3 max-w-xl text-xs leading-relaxed text-text-faint">
         This demo doesn&rsquo;t store the project&rsquo;s real uploaded footage — every
@@ -135,28 +145,38 @@ export default function AnnotationWorkspace({
       </p>
 
       <div className="mt-8 flex gap-1.5 border-b border-border">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={`relative px-4 py-3 font-mono-tech text-[0.64rem] tracking-[0.14em] transition-colors ${
-              tab === t.key ? "text-orange-bright" : "text-text-faint hover:text-text-muted"
-            }`}
-          >
-            {t.label}
-            {tab === t.key && (
-              <motion.span
-                layoutId="workspace-tab-underline"
-                className="absolute inset-x-0 -bottom-px h-[2px] bg-orange"
-                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              />
-            )}
-          </button>
-        ))}
+        {tabs.map((t) => {
+          const locked = t.key === "annotate" && !segments;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              disabled={locked}
+              onClick={() => !locked && setTab(t.key)}
+              title={locked ? "Segment the video first" : undefined}
+              className={`relative px-4 py-3 font-mono-tech text-[0.64rem] tracking-[0.14em] transition-colors ${
+                locked
+                  ? "cursor-not-allowed text-text-faint/40"
+                  : tab === t.key
+                    ? "text-orange-bright"
+                    : "text-text-faint hover:text-text-muted"
+              }`}
+            >
+              {t.label}
+              {locked && " \u{1F512}"}
+              {tab === t.key && (
+                <motion.span
+                  layoutId="workspace-tab-underline"
+                  className="absolute inset-x-0 -bottom-px h-[2px] bg-orange"
+                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                />
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {tab === "annotate" && (
+      {(tab === "segments" || tab === "annotate") && (
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
           <div className="flex flex-col gap-4">
             <VideoPlayer
@@ -165,29 +185,49 @@ export default function AnnotationWorkspace({
               onTimeUpdate={setCurrentTime}
               onDurationChange={setDuration}
             />
-            <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} />
+            <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} segments={segments} />
           </div>
 
           <div className="flex flex-col gap-6">
-            {readOnly ? (
-              <div className="hs-panel p-5 text-center text-sm text-text-muted">{lockedMessage}</div>
-            ) : (
-              <CreateEventForm
-                project={currentProject}
+            {tab === "segments" && (
+              <SegmentVideo
+                format={currentProject.format}
+                duration={duration}
                 currentTimeSeconds={currentTime}
-                editingEvent={editingEvent}
-                onSave={handleSave}
-                onCancelEdit={() => setEditingEvent(null)}
+                existing={segments}
+                onSave={handleSaveSegments}
               />
             )}
-            <EventsList
-              project={currentProject}
-              events={events}
-              onSeek={handleSeek}
-              onEdit={readOnly ? undefined : setEditingEvent}
-              onDelete={readOnly ? undefined : handleDelete}
-              readOnly={readOnly}
-            />
+
+            {tab === "annotate" && (
+              segments ? (
+                <>
+                  {readOnly ? (
+                    <div className="hs-panel p-5 text-center text-sm text-text-muted">{lockedMessage}</div>
+                  ) : (
+                    <CreateEventForm
+                      project={currentProject}
+                      currentTimeSeconds={currentTime}
+                      editingEvent={editingEvent}
+                      onSave={handleSave}
+                      onCancelEdit={() => setEditingEvent(null)}
+                    />
+                  )}
+                  <EventsList
+                    project={currentProject}
+                    events={events}
+                    onSeek={handleSeek}
+                    onEdit={readOnly ? undefined : setEditingEvent}
+                    onDelete={readOnly ? undefined : handleDelete}
+                    readOnly={readOnly}
+                  />
+                </>
+              ) : (
+                <div className="hs-panel p-5 text-center text-sm text-text-muted">
+                  Segment the video first — see the SEGMENTS tab.
+                </div>
+              )
+            )}
           </div>
         </div>
       )}

@@ -81,7 +81,7 @@ export default function AnnotatorTasksPage() {
                     </p>
                     {row.project && (
                       <p className="mt-1 font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">
-                        {row.project.roster.length} PLAYERS
+                        {row.project.format.toUpperCase()} · {row.project.roster.length} PLAYERS
                         {row.project.opponentRoster ? ` · ${row.project.opponentRoster.length} OPPONENT` : ""}
                       </p>
                     )}

@@ -2,6 +2,7 @@
 
 import type { AnnotationEvent } from "@/lib/portal/events";
 import { SHOT_EVENT_TYPES } from "@/lib/portal/events";
+import type { VideoSegment } from "@/lib/portal/segments";
 
 function tickColor(evt: AnnotationEvent): string {
   if (!SHOT_EVENT_TYPES.includes(evt.eventType)) return "var(--text-faint)";
@@ -12,10 +13,12 @@ export default function EventsTimeline({
   durationSeconds,
   events,
   onSeek,
+  segments,
 }: {
   durationSeconds: number;
   events: AnnotationEvent[];
   onSeek: (seconds: number) => void;
+  segments?: VideoSegment[] | null;
 }) {
   return (
     <div className="hs-panel p-4">
@@ -23,6 +26,16 @@ export default function EventsTimeline({
         EVENT TIMELINE
       </p>
       <div className="relative h-8 rounded-md border border-border bg-surface">
+        {durationSeconds > 0 &&
+          segments &&
+          segments.slice(0, -1).map((seg) => (
+            <div
+              key={`boundary-${seg.label}`}
+              className="pointer-events-none absolute top-0 h-full w-px bg-border-strong"
+              style={{ left: `${Math.min(100, Math.max(0, (seg.endSeconds / durationSeconds) * 100))}%` }}
+              title={`End of ${seg.label}`}
+            />
+          ))}
         {durationSeconds > 0 &&
           events.map((evt) => (
             <button
