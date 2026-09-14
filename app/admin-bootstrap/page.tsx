@@ -4,19 +4,19 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import AuthShell from "@/components/auth/AuthShell";
-import { listAllUsers, registerUser, setSession } from "@/lib/auth/mockAuthStore";
-import { ADMIN_BOOTSTRAP_CODE } from "@/lib/auth/adminBootstrapCode";
+import { listAllUsers, registerFirstAdmin } from "@/lib/auth/supabaseAuth";
 
-type Errors = Partial<Record<"name" | "email" | "password" | "code", string>>;
+type Errors = Partial<Record<"name" | "email" | "password", string>>;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * One-time, unlinked admin account creation. Deliberately NOT a normal
- * signup page: it only renders a form while zero admin accounts exist in
- * this browser, and permanently "disables itself" (shows a plain message
- * instead) the moment one does. See lib/auth/adminBootstrapCode.ts for why
- * a code is still required on top of that check.
+ * signup page: it only renders a form while zero admin accounts exist,
+ * and permanently "disables itself" (shows a plain message instead) the
+ * moment one does. The actual check is atomic and server-side (the
+ * bootstrap_admin_if_none_exists Postgres function) — the check on load
+ * here is just what decides which UI to show, not a security boundary.
  */
 export default function AdminBootstrapPage() {
   const router = useRouter();
@@ -25,13 +25,12 @@ export default function AdminBootstrapPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading">("idle");
 
   useEffect(() => {
-    setAdminExists(listAllUsers().some((u) => u.role === "admin"));
+    listAllUsers().then((users) => setAdminExists(users.some((u) => u.role === "admin")));
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -42,18 +41,16 @@ export default function AdminBootstrapPage() {
     if (name.trim().length < 2) next.name = "Enter your full name.";
     if (!EMAIL_RE.test(email)) next.email = "Enter a valid email address.";
     if (password.length < 8) next.password = "Password must be at least 8 characters.";
-    if (code.trim() !== ADMIN_BOOTSTRAP_CODE) next.code = "Invalid bootstrap code.";
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
     setStatus("loading");
-    const result = await registerUser({ name, email, password, role: "admin" });
+    const result = await registerFirstAdmin({ name, email, password });
     if (!result.ok) {
       setStatus("idle");
       setFormError(result.error);
       return;
     }
-    setSession(result.user, true);
     router.push("/admin-portal");
   }
 
@@ -76,7 +73,7 @@ export default function AdminBootstrapPage() {
         eyebrow="ADMIN BOOTSTRAP"
         title="Already"
         titleAccent="initialized."
-        subtitle="An admin account already exists in this browser. Contact an existing admin for access."
+        subtitle="An admin account already exists. Contact an existing admin for access."
         footer={null}
       >
         <div className="hs-panel p-6 text-center text-sm text-text-muted">
@@ -91,7 +88,7 @@ export default function AdminBootstrapPage() {
       eyebrow="ADMIN BOOTSTRAP"
       title="Create the"
       titleAccent="first admin."
-      subtitle="One-time setup — this only works because no admin account exists yet in this browser."
+      subtitle="One-time setup — this only works because no admin account exists yet."
       footer={null}
     >
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
@@ -150,18 +147,6 @@ export default function AdminBootstrapPage() {
             aria-invalid={!!errors.password}
           />
           {fieldError("password")}
-        </div>
-
-        <div>
-          <label htmlFor="code" className="hs-label">BOOTSTRAP CODE</label>
-          <input
-            id="code"
-            className="hs-input"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            aria-invalid={!!errors.code}
-          />
-          {fieldError("code")}
         </div>
 
         <button

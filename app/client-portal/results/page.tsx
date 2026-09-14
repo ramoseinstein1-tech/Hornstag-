@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
@@ -10,7 +10,7 @@ import {
   toCsv,
   downloadCsv,
 } from "@/lib/portal/store";
-import type { PlayerBoxScore, TaggedClip, ProjectStatus } from "@/lib/portal/store";
+import type { Project, PlayerBoxScore, ProjectResults, TaggedClip, ProjectStatus } from "@/lib/portal/store";
 import { officialOutcome } from "@/lib/portal/store";
 import { computeRealResults, hasRealAnnotationData } from "@/lib/portal/results";
 
@@ -141,14 +141,39 @@ const PENDING_COPY: Record<Exclude<ProjectStatus, "Completed">, { chip: string; 
 
 export default function ResultsPage() {
   const { user } = useAuth();
-  const allProjects = useMemo(() => (user ? getProjects(user.id) : []), [user]);
-  const [selectedId, setSelectedId] = useState<string | null>(allProjects[0]?.id ?? null);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [results, setResults] = useState<ProjectResults | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    getProjects(user.id).then((projects) => {
+      setAllProjects(projects);
+      setSelectedId((prev) => prev ?? projects[0]?.id ?? null);
+    });
+  }, [user]);
 
   const selected = allProjects.find((p) => p.id === selectedId) ?? allProjects[0] ?? null;
-  const results = useMemo(() => {
-    if (!selected || selected.status !== "Completed") return null;
-    return hasRealAnnotationData(selected.id) ? computeRealResults(selected) : getProjectResults(selected);
+
+  useEffect(() => {
+    if (!selected || selected.status !== "Completed") {
+      setResults(null);
+      return;
+    }
+    let cancelled = false;
+    hasRealAnnotationData(selected.id).then((hasReal) => {
+      if (cancelled) return;
+      if (hasReal) {
+        computeRealResults(selected).then((r) => !cancelled && setResults(r));
+      } else {
+        setResults(getProjectResults(selected));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [selected]);
+
   const yourTotals = useMemo(() => (results ? teamTotals(results.team) : null), [results]);
   const oppTotals = useMemo(
     () => (results?.opponent ? teamTotals(results.opponent) : null),

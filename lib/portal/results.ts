@@ -79,8 +79,8 @@ function computeClips(project: Project, events: AnnotationEvent[]): TaggedClip[]
 
 /** Real, annotator-tagged results for a project — used once a project is
  * "Completed" and has actual tagged events behind it. */
-export function computeRealResults(project: Project): ProjectResults {
-  const events = getEvents(project.id);
+export async function computeRealResults(project: Project): Promise<ProjectResults> {
+  const events = await getEvents(project.id);
   const team = computeBoxScoreForSide(project.roster, events, "team");
   const opponent =
     project.opponentRoster && project.opponentRoster.length > 0
@@ -89,6 +89,7 @@ export function computeRealResults(project: Project): ProjectResults {
   return { team, opponent, clips: computeClips(project, events) };
 }
 
-export function hasRealAnnotationData(projectId: string): boolean {
-  return getEvents(projectId).length > 0;
+export async function hasRealAnnotationData(projectId: string): Promise<boolean> {
+  const events = await getEvents(projectId);
+  return events.length > 0;
 }

@@ -1,10 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { listAllUsers } from "@/lib/auth/mockAuthStore";
-import { getProjects, formatRelativeTime } from "@/lib/portal/store";
-import { getGlobalProjects, type GlobalAnnotationStatus } from "@/lib/portal/globalProjects";
+import { listAllUsers, type AdminUserSummary } from "@/lib/auth/supabaseAuth";
+import { getVisibleProjects, formatRelativeTime, type AnnotationStatus, type Project } from "@/lib/portal/store";
 import { getEvents } from "@/lib/portal/events";
 
 function StatTile({ label, value, chips }: { label: string; value: number; chips?: { label: string; value: number }[] }) {
@@ -25,24 +25,29 @@ function StatTile({ label, value, chips }: { label: string; value: number; chips
   );
 }
 
-const STATUS_ORDER: GlobalAnnotationStatus[] = ["Unclaimed", "Claimed", "In Review", "Completed"];
+const STATUS_ORDER: AnnotationStatus[] = ["Unclaimed", "Claimed", "In Review", "Completed"];
 
 export default function AdminDashboardPage() {
-  const users = listAllUsers();
+  const [users, setUsers] = useState<AdminUserSummary[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [totalEvents, setTotalEvents] = useState(0);
+
+  useEffect(() => {
+    listAllUsers().then(setUsers);
+    getVisibleProjects().then(async (all) => {
+      setProjects(all);
+      const counts = await Promise.all(all.map((p) => getEvents(p.id)));
+      setTotalEvents(counts.reduce((sum, evts) => sum + evts.length, 0));
+    });
+  }, []);
+
   const clients = users.filter((u) => u.role === "client").length;
   const annotators = users.filter((u) => u.role === "annotator").length;
   const admins = users.filter((u) => u.role === "admin").length;
 
-  const projects = getGlobalProjects();
-  const totalEvents = projects.reduce((sum, p) => sum + getEvents(p.projectId).length, 0);
-
   const recent = [...projects]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5)
-    .map((entry) => ({
-      entry,
-      project: getProjects(entry.ownerId).find((p) => p.id === entry.projectId),
-    }));
+    .slice(0, 5);
 
   return (
     <div>
@@ -51,7 +56,7 @@ export default function AdminDashboardPage() {
         <span className="text-gradient">Overview.</span>
       </h1>
       <p className="mt-3 max-w-lg text-sm leading-relaxed text-text-muted">
-        Users, projects, and annotation activity across this browser.
+        Users, projects, and annotation activity across the platform.
       </p>
 
       <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -88,15 +93,15 @@ export default function AdminDashboardPage() {
           <p className="text-sm text-text-faint">No projects yet.</p>
         ) : (
           <ul className="flex flex-col divide-y divide-border">
-            {recent.map(({ entry, project }) => (
-              <li key={entry.projectId} className="flex items-center justify-between gap-3 py-3 first:pt-0">
+            {recent.map((project) => (
+              <li key={project.id} className="flex items-center justify-between gap-3 py-3 first:pt-0">
                 <div className="min-w-0">
-                  <p className="truncate text-sm text-text">{project?.name ?? "Untitled match"}</p>
+                  <p className="truncate text-sm text-text">{project.name}</p>
                   <p className="mt-0.5 font-mono-tech text-[0.56rem] tracking-[0.1em] text-text-faint">
-                    {entry.ownerName} · {formatRelativeTime(entry.createdAt).toUpperCase()}
+                    {project.ownerName} · {formatRelativeTime(project.createdAt).toUpperCase()}
                   </p>
                 </div>
-                <span className="hs-chip !py-1 !text-[0.56rem]">{entry.annotationStatus.toUpperCase()}</span>
+                <span className="hs-chip !py-1 !text-[0.56rem]">{project.annotationStatus.toUpperCase()}</span>
               </li>
             ))}
           </ul>

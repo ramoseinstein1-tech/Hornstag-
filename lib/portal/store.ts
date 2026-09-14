@@ -1,19 +1,26 @@
 /**
- * MOCK, CLIENT-SIDE PROJECT STORE
+ * REAL, SUPABASE-BACKED PROJECT STORE
  * ─────────────────────────────────────────────────────────────────
- * Same story as lib/auth/mockAuthStore.ts — there's no backend yet, so
- * this persists projects/activity per-user in localStorage. Uploaded
- * video files are NOT actually stored anywhere (there's no server to
- * receive them); only the file's name/size are recorded so the UI can
- * show something real. Replace with real API routes + object storage
- * (S3/R2/etc.) before this handles real uploads.
+ * Replaces the old localStorage mock. Projects, roster, and activity now
+ * live in Postgres (see supabase/migrations/00000000000000_init.sql) with
+ * Row Level Security enforcing who can see/edit what. Uploaded video
+ * files still aren't actually stored anywhere yet (Phase 2 of the
+ * backend migration) — only the file's name/size are recorded so the UI
+ * can show something real.
+ *
+ * The claim/assignment fields that used to live in a separate
+ * lib/portal/globalProjects.ts "global index" (a workaround for
+ * localStorage being siloed per browser) are now just columns on this
+ * same `projects` row — RLS makes them visible to the right roles
+ * directly, no separate index needed.
  */
 
-import { publishProjectToGlobalIndex } from "./globalProjects";
+import { createClient } from "@/lib/supabase/client";
 
 export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed";
 export type AnnotationScope = "Single Team" | "Both Teams";
 export type GameFormat = "Quarters" | "Halves";
+export type AnnotationStatus = "Unclaimed" | "Claimed" | "In Review" | "Completed";
 
 export type RosterPlayer = {
   id: string;
@@ -21,18 +28,22 @@ export type RosterPlayer = {
   name: string;
 };
 
-/** The final score the client reports at upload time — the ground truth
- * the annotator's tagged events are checked against during QA. Optional
- * on the type only because pre-existing (seed/legacy) records predate
- * this field; every NEW project requires it (enforced by the upload
- * form, not this type). */
 export type OfficialScore = {
   team: number;
   opponent: number;
 };
 
+/** "team" | "opponent" if one side outscored the other, else "tie". */
+export function officialOutcome(score: OfficialScore): "team" | "opponent" | "tie" {
+  if (score.team > score.opponent) return "team";
+  if (score.opponent > score.team) return "opponent";
+  return "tie";
+}
+
 export type Project = {
   id: string;
+  ownerId: string;
+  ownerName: string;
   name: string;
   opponent?: string;
   gameDate?: string;
@@ -46,16 +57,14 @@ export type Project = {
   status: ProjectStatus;
   progress: number;
   officialScore?: OfficialScore;
+  annotationStatus: AnnotationStatus;
+  claimedBy?: string;
+  claimedByName?: string;
+  claimedAt?: string;
+  submissionNote?: string;
   createdAt: string;
   updatedAt: string;
 };
-
-/** "team" | "opponent" if one side outscored the other, else "tie". */
-export function officialOutcome(score: OfficialScore): "team" | "opponent" | "tie" {
-  if (score.team > score.opponent) return "team";
-  if (score.opponent > score.team) return "opponent";
-  return "tie";
-}
 
 export type ActivityEntry = {
   id: string;
@@ -63,262 +72,166 @@ export type ActivityEntry = {
   time: string;
 };
 
-type PortalData = {
-  projects: Project[];
-  activity: ActivityEntry[];
+type RosterRow = { id: string; side: "team" | "opponent"; number: string; name: string; sort_order: number };
+
+type ProjectRow = {
+  id: string;
+  owner_id: string;
+  owner_name: string;
+  name: string;
+  opponent: string | null;
+  game_date: string | null;
+  scope: AnnotationScope;
+  format: GameFormat;
+  notes: string | null;
+  file_name: string | null;
+  file_size: string | null;
+  status: ProjectStatus;
+  progress: number;
+  official_score_team: number | null;
+  official_score_opponent: number | null;
+  annotation_status: AnnotationStatus;
+  claimed_by: string | null;
+  claimed_by_name: string | null;
+  claimed_at: string | null;
+  submission_note: string | null;
+  created_at: string;
+  updated_at: string;
+  roster_players: RosterRow[];
 };
 
-// Bumped to v2 when the Project shape changed (level/priority ->
-// scope/format/roster), then to v3 when RosterPlayer gained a stable `id`
-// (needed so annotation events can reference a specific player instead of
-// reconstructing identity from "${number}-${name}" strings). Unlike the
-// v1->v2 bump, v2->v3 is migrated in place (see migrateV2ToV3) rather than
-// just reseeded, since real client-uploaded rosters shouldn't be wiped by
-// a purely additive field.
-const KEY_PREFIX = "hornstag_portal_v3_";
-const KEY_PREFIX_V2 = "hornstag_portal_v2_";
-
-function isBrowser() {
-  return typeof window !== "undefined";
+function toRosterPlayers(rows: RosterRow[], side: "team" | "opponent"): RosterPlayer[] {
+  return rows
+    .filter((r) => r.side === side)
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((r) => ({ id: r.id, number: r.number, name: r.name }));
 }
 
-function key(userId: string) {
-  return `${KEY_PREFIX}${userId}`;
-}
-
-function keyV2(userId: string) {
-  return `${KEY_PREFIX_V2}${userId}`;
-}
-
-function seedData(): PortalData {
-  const now = Date.now();
-  const hoursAgo = (h: number) => new Date(now - h * 60 * 60 * 1000).toISOString();
-
+function mapProjectRow(row: ProjectRow): Project {
+  const opponentRoster = toRosterPlayers(row.roster_players, "opponent");
   return {
-    projects: [
-      {
-        id: "seed-1",
-        name: "Hawks vs. Celtics — Full Game",
-        opponent: "vs. Celtics",
-        scope: "Both Teams",
-        format: "Quarters",
-        roster: [
-          { id: "seed-1-p1", number: "23", name: "J. Carter" },
-          { id: "seed-1-p2", number: "11", name: "D. Nguyen" },
-          { id: "seed-1-p3", number: "04", name: "M. Osei" },
-        ],
-        opponentRoster: [
-          { id: "seed-1-o1", number: "7", name: "T. Brooks" },
-          { id: "seed-1-o2", number: "15", name: "R. Silva" },
-        ],
-        status: "In Progress",
-        progress: 62,
-        officialScore: { team: 78, opponent: 71 },
-        createdAt: hoursAgo(30),
-        updatedAt: hoursAgo(2),
-      },
-      {
-        id: "seed-2",
-        name: "U18 Regional Semifinal",
-        scope: "Single Team",
-        format: "Halves",
-        roster: [
-          { id: "seed-2-p1", number: "32", name: "A. Patel" },
-          { id: "seed-2-p2", number: "09", name: "K. Reyes" },
-        ],
-        status: "Needs Review",
-        progress: 100,
-        officialScore: { team: 64, opponent: 59 },
-        createdAt: hoursAgo(48),
-        updatedAt: hoursAgo(24),
-      },
-      {
-        id: "seed-3",
-        name: "Scouting Reel — G. Martinez",
-        scope: "Single Team",
-        format: "Quarters",
-        roster: [{ id: "seed-3-p1", number: "05", name: "G. Martinez" }],
-        status: "Completed",
-        progress: 100,
-        officialScore: { team: 82, opponent: 75 },
-        createdAt: hoursAgo(96),
-        updatedAt: hoursAgo(72),
-      },
-    ],
-    activity: [
-      { id: "seed-a1", text: 'QA pass completed on "Hawks vs. Celtics"', time: hoursAgo(2) },
-      { id: "seed-a2", text: '42 new events annotated in "U18 Regional Semifinal"', time: hoursAgo(5) },
-      { id: "seed-a3", text: '"Scouting Reel — G. Martinez" marked complete', time: hoursAgo(72) },
-      { id: "seed-a4", text: 'Uploaded new game film: "Hawks vs. Celtics"', time: hoursAgo(96) },
-    ],
+    id: row.id,
+    ownerId: row.owner_id,
+    ownerName: row.owner_name,
+    name: row.name,
+    opponent: row.opponent ?? undefined,
+    gameDate: row.game_date ?? undefined,
+    scope: row.scope,
+    format: row.format,
+    roster: toRosterPlayers(row.roster_players, "team"),
+    opponentRoster: row.scope === "Both Teams" ? opponentRoster : undefined,
+    notes: row.notes ?? undefined,
+    fileName: row.file_name ?? undefined,
+    fileSize: row.file_size ?? undefined,
+    status: row.status,
+    progress: row.progress,
+    officialScore:
+      row.official_score_team != null && row.official_score_opponent != null
+        ? { team: row.official_score_team, opponent: row.official_score_opponent }
+        : undefined,
+    annotationStatus: row.annotation_status,
+    claimedBy: row.claimed_by ?? undefined,
+    claimedByName: row.claimed_by_name ?? undefined,
+    claimedAt: row.claimed_at ?? undefined,
+    submissionNote: row.submission_note ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
-function isValidShape(data: unknown): data is PortalData {
-  if (!data || typeof data !== "object") return false;
-  const { projects } = data as PortalData;
-  if (!Array.isArray(projects)) return false;
-  // Spot-check every record against the current Project shape (including
-  // the v3 roster `id` field) so a schema change we forgot to version-bump
-  // self-heals instead of crashing the page on a missing field.
-  return projects.every(
-    (p) =>
-      typeof p.scope === "string" &&
-      typeof p.format === "string" &&
-      Array.isArray(p.roster) &&
-      p.roster.every((r) => typeof r.id === "string") &&
-      (p.opponentRoster === undefined ||
-        (Array.isArray(p.opponentRoster) && p.opponentRoster.every((r) => typeof r.id === "string")))
-  );
+const PROJECT_SELECT = "*, roster_players(*)";
+
+/** Every project a CLIENT owns. RLS already restricts this to their own
+ * rows, but filtering by owner_id here too keeps the query intent clear. */
+export async function getProjects(userId: string): Promise<Project[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("projects")
+    .select(PROJECT_SELECT)
+    .eq("owner_id", userId)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return (data as unknown as ProjectRow[]).map(mapProjectRow);
 }
 
-/** Migrates a pre-v3 record forward by synthesizing an id for any roster
- * player that doesn't already have one, rather than discarding the data —
- * unlike the v1->v2 bump, this field is purely additive so there's no
- * reason to reseed a client's real uploaded projects. Returns null if
- * there's no v2 data to migrate. */
-function migrateV2ToV3(userId: string): PortalData | null {
-  if (!isBrowser()) return null;
-  try {
-    const raw = window.localStorage.getItem(keyV2(userId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.projects)) return null;
-
-    const withIds = (roster: unknown): RosterPlayer[] =>
-      Array.isArray(roster)
-        ? roster.map((r: Partial<RosterPlayer>) => ({
-            id: typeof r.id === "string" ? r.id : crypto.randomUUID(),
-            number: r.number ?? "",
-            name: r.name ?? "",
-          }))
-        : [];
-
-    const migrated: PortalData = {
-      projects: parsed.projects.map((p: Project & { roster: unknown; opponentRoster?: unknown }) => ({
-        ...p,
-        roster: withIds(p.roster),
-        opponentRoster: p.opponentRoster ? withIds(p.opponentRoster) : p.opponentRoster,
-      })),
-      activity: Array.isArray(parsed.activity) ? parsed.activity : [],
-    };
-    return migrated;
-  } catch {
-    return null;
-  }
+export async function getProject(projectId: string): Promise<Project | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase.from("projects").select(PROJECT_SELECT).eq("id", projectId).single();
+  if (error || !data) return null;
+  return mapProjectRow(data as unknown as ProjectRow);
 }
 
-function readData(userId: string): PortalData {
-  if (!isBrowser()) return { projects: [], activity: [] };
-  try {
-    const raw = window.localStorage.getItem(key(userId));
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (isValidShape(parsed)) return parsed;
-    }
-  } catch {
-    // Corrupt data — fall through and try migrating, then reseed.
-  }
-
-  const migrated = migrateV2ToV3(userId);
-  if (migrated && isValidShape(migrated)) {
-    writeData(userId, migrated);
-    window.localStorage.removeItem(keyV2(userId));
-    return migrated;
-  }
-
-  const seeded = seedData();
-  writeData(userId, seeded);
-  return seeded;
+/** Every project visible to the CALLER's role — for a client, just their
+ * own (same as getProjects); for an annotator, Unclaimed projects plus
+ * anything claimed_by them; for an admin, everything. Which rows come
+ * back is entirely up to RLS — this function doesn't filter by role
+ * itself, it just asks for "all projects I'm allowed to see." */
+export async function getVisibleProjects(): Promise<Project[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("projects")
+    .select(PROJECT_SELECT)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return (data as unknown as ProjectRow[]).map(mapProjectRow);
 }
 
-function writeData(userId: string, data: PortalData) {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(key(userId), JSON.stringify(data));
-}
-
-export function getProjects(userId: string): Project[] {
-  return readData(userId).projects;
-}
-
-export function getActivity(userId: string): ActivityEntry[] {
-  return readData(userId).activity;
+export async function getActivity(userId: string): Promise<ActivityEntry[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("activity_log")
+    .select("id, text, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map((a) => ({ id: a.id, text: a.text, time: a.created_at }));
 }
 
 /** Adds an entry to a client's activity feed from OUTSIDE their own
- * session — used by lib/portal/pipeline.ts so a client actually sees a
- * concrete, visible signal on their dashboard when QA completes a
- * project, rather than having to guess results are ready by refreshing
- * the Results page. Same same-browser-localStorage caveat as the rest of
- * this file's cross-role writes (see updateRoster/setProjectStatus). */
-export function addActivity(userId: string, text: string): void {
-  const data = readData(userId);
-  data.activity = [{ id: crypto.randomUUID(), text, time: new Date().toISOString() }, ...data.activity];
-  writeData(userId, data);
-}
-
-export function deleteUserData(userId: string) {
-  if (!isBrowser()) return;
-  window.localStorage.removeItem(key(userId));
+ * session — used by lib/portal/pipeline.ts's approveAndComplete, which
+ * runs as the admin, via the approve_and_complete RPC (which does the
+ * insert itself, server-side) — this direct-insert version exists for
+ * any other same-purpose caller and relies on activity_log's RLS. */
+export async function addActivity(userId: string, text: string): Promise<void> {
+  const supabase = createClient();
+  await supabase.from("activity_log").insert({ user_id: userId, text });
 }
 
 /**
- * Updates a project's roster from OUTSIDE the owning client's own session —
- * used by the annotator workspace, since annotators need to fix/extend a
- * roster while tagging (a jersey number typo, a player the client forgot).
- * Writes directly into the owning client's localStorage bucket, which only
- * works because this is all same-browser localStorage with no real access
- * control (see the file-level comment above) — not a security boundary.
+ * Replaces a project's roster wholesale (both the "team" and, for
+ * Both-Teams projects, "opponent" sides) — used by both the client's
+ * upload/edit flow and the annotator's in-workspace roster fixes (RLS
+ * permits both the owner and the assigned annotator to write here).
+ * Deletes the old rows and inserts the new list rather than diffing,
+ * since callers always pass the complete edited roster.
  */
-export function updateRoster(
-  ownerId: string,
+export async function updateRoster(
   projectId: string,
   roster: RosterPlayer[],
   opponentRoster?: RosterPlayer[]
-): Project | null {
-  const data = readData(ownerId);
-  const idx = data.projects.findIndex((p) => p.id === projectId);
-  if (idx === -1) return null;
+): Promise<Project | null> {
+  const supabase = createClient();
 
-  data.projects[idx] = {
-    ...data.projects[idx],
-    roster,
-    opponentRoster: data.projects[idx].scope === "Both Teams" ? opponentRoster : data.projects[idx].opponentRoster,
-    updatedAt: new Date().toISOString(),
-  };
-  writeData(ownerId, data);
-  return data.projects[idx];
+  await supabase.from("roster_players").delete().eq("project_id", projectId).eq("side", "team");
+  if (roster.length > 0) {
+    await supabase.from("roster_players").insert(
+      roster.map((p, i) => ({ id: p.id, project_id: projectId, side: "team", number: p.number, name: p.name, sort_order: i }))
+    );
+  }
+
+  if (opponentRoster !== undefined) {
+    await supabase.from("roster_players").delete().eq("project_id", projectId).eq("side", "opponent");
+    if (opponentRoster.length > 0) {
+      await supabase.from("roster_players").insert(
+        opponentRoster.map((p, i) => ({ id: p.id, project_id: projectId, side: "opponent", number: p.number, name: p.name, sort_order: i }))
+      );
+    }
+  }
+
+  return getProject(projectId);
 }
 
-/**
- * Updates a project's client-facing status/progress from OUTSIDE the
- * owning client's own session — called by lib/portal/pipeline.ts to keep
- * this mirrored with the annotation-side GlobalAnnotationStatus, so the
- * client's own Results page (which gates on `status`) actually reflects
- * real pipeline progress instead of staying frozen at "Processing"
- * forever (its only previous value, set once at createProject()).
- */
-export function setProjectStatus(
-  ownerId: string,
-  projectId: string,
-  status: ProjectStatus,
-  progress?: number
-): Project | null {
-  const data = readData(ownerId);
-  const idx = data.projects.findIndex((p) => p.id === projectId);
-  if (idx === -1) return null;
-
-  data.projects[idx] = {
-    ...data.projects[idx],
-    status,
-    progress: progress ?? data.projects[idx].progress,
-    updatedAt: new Date().toISOString(),
-  };
-  writeData(ownerId, data);
-  return data.projects[idx];
-}
-
-export function createProject(
+export async function createProject(
   userId: string,
   input: {
     name: string;
@@ -333,51 +246,45 @@ export function createProject(
     fileSize?: string;
     officialScore: OfficialScore;
   },
-  ownerName?: string
-): Project {
-  const data = readData(userId);
-  const now = new Date().toISOString();
+  ownerName: string
+): Promise<Project | null> {
+  const supabase = createClient();
 
-  const project: Project = {
-    id: crypto.randomUUID(),
-    name: input.name,
-    opponent: input.opponent,
-    gameDate: input.gameDate,
-    scope: input.scope,
-    format: input.format,
-    roster: input.roster,
-    opponentRoster: input.opponentRoster,
-    notes: input.notes,
-    fileName: input.fileName,
-    fileSize: input.fileSize,
-    officialScore: input.officialScore,
-    status: "Processing",
-    progress: 4,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const { data: projectRow, error } = await supabase
+    .from("projects")
+    .insert({
+      owner_id: userId,
+      owner_name: ownerName,
+      name: input.name,
+      opponent: input.opponent,
+      game_date: input.gameDate || null,
+      scope: input.scope,
+      format: input.format,
+      notes: input.notes,
+      file_name: input.fileName,
+      file_size: input.fileSize,
+      official_score_team: input.officialScore.team,
+      official_score_opponent: input.officialScore.opponent,
+    })
+    .select()
+    .single();
 
-  const activityEntry: ActivityEntry = {
-    id: crypto.randomUUID(),
-    text: `Uploaded new game film: "${input.name}"`,
-    time: now,
-  };
+  if (error || !projectRow) return null;
 
-  data.projects = [project, ...data.projects];
-  data.activity = [activityEntry, ...data.activity];
-  writeData(userId, data);
+  if (input.roster.length > 0) {
+    await supabase.from("roster_players").insert(
+      input.roster.map((p, i) => ({ id: p.id, project_id: projectRow.id, side: "team", number: p.number, name: p.name, sort_order: i }))
+    );
+  }
+  if (input.opponentRoster && input.opponentRoster.length > 0) {
+    await supabase.from("roster_players").insert(
+      input.opponentRoster.map((p, i) => ({ id: p.id, project_id: projectRow.id, side: "opponent", number: p.number, name: p.name, sort_order: i }))
+    );
+  }
 
-  // Publishes a lightweight pointer to this project so an Annotator (a
-  // different account, same browser) can find it to claim — see
-  // lib/portal/globalProjects.ts for the same-browser-only caveat.
-  publishProjectToGlobalIndex({
-    projectId: project.id,
-    ownerId: userId,
-    ownerName: ownerName ?? "Unknown",
-    createdAt: now,
-  });
+  await addActivity(userId, `Uploaded new game film: "${input.name}"`);
 
-  return project;
+  return getProject(projectRow.id);
 }
 
 export function formatRelativeTime(iso: string): string {
@@ -398,13 +305,14 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * MOCK RESULTS GENERATION
+ * FAKE RESULTS GENERATION (fallback only)
  * ─────────────────────────────────────────────────────────────────
- * There's no computer-vision pipeline behind this demo, so box scores
- * and tagged clips are generated deterministically from the project's
- * own roster and id (same project always produces the same "results" —
- * it just isn't re-randomized on every render). Replace with real
- * annotation output once a backend exists.
+ * lib/portal/results.ts's computeRealResults() is the real source of
+ * truth once a project has actual tagged events. This deterministic
+ * seeded-PRNG generator only exists as a fallback for the 3 hardcoded
+ * demo/seed projects (which predate real annotation and have zero real
+ * events behind them) so they keep looking intentional instead of
+ * showing an empty box score.
  */
 
 export type PlayerBoxScore = {
@@ -428,9 +336,6 @@ export type TaggedClip = {
   time: string;
   player: string;
   confidence: number;
-  /** True only for a REAL, annotator-tagged clip (see lib/portal/results.ts)
-   * — lets ClipCard show "verified" instead of a meaningless fake
-   * confidence score. Always undefined for this file's own fake genClips(). */
   verified?: boolean;
 };
 
@@ -461,9 +366,6 @@ function genPlayerStats(p: RosterPlayer, rand: () => number): PlayerBoxScore {
   const tpm = Math.min(tpa, Math.round(tpa * (0.2 + rand() * 0.3)));
   const ftBonus = Math.floor(rand() * 6);
 
-  // fgm/fga are ALL field goals (2s and 3s combined, standard box-score
-  // convention), with tpm/tpa the 3-point subset. Points = 2pt makes*2 +
-  // 3pt makes*3 = (fgm-tpm)*2 + tpm*3, which simplifies to fgm*2 + tpm.
   return {
     number: p.number,
     name: p.name,
@@ -480,16 +382,7 @@ function genPlayerStats(p: RosterPlayer, rand: () => number): PlayerBoxScore {
   };
 }
 
-const EVENT_POOL = [
-  "SHOT ATTEMPT",
-  "3PT MADE",
-  "REBOUND",
-  "ASSIST",
-  "STEAL",
-  "BLOCK",
-  "TURNOVER",
-  "FOUL",
-];
+const EVENT_POOL = ["SHOT ATTEMPT", "3PT MADE", "REBOUND", "ASSIST", "STEAL", "BLOCK", "TURNOVER", "FOUL"];
 
 function genClips(project: Project, rand: () => number): TaggedClip[] {
   const players = [...project.roster, ...(project.opponentRoster ?? [])];
@@ -560,7 +453,7 @@ export function toCsv(headers: string[], rows: (string | number)[][]): string {
 }
 
 export function downloadCsv(filename: string, csv: string) {
-  if (!isBrowser()) return;
+  if (typeof window === "undefined") return;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

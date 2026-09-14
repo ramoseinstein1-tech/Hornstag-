@@ -1,15 +1,20 @@
 /**
- * MOCK, PER-PROJECT ANNOTATION EVENT STORE
+ * REAL, SUPABASE-BACKED ANNOTATION EVENT STORE
  * ─────────────────────────────────────────────────────────────────
- * Same story as the other lib/portal stores — no backend, so this
- * persists in localStorage. Deliberately keyed PER-PROJECT
- * (hornstag_events_v1_${projectId}), NOT per-user like ./store.ts,
- * because these events belong to the match itself and must eventually be
- * readable by the CLIENT who owns the project (a different user id) when
- * they view Results — not just by whichever annotator tagged them. This
- * relies on the same origin-wide-localStorage mechanism (and same
- * same-browser-only caveat) as lib/portal/globalProjects.ts.
+ * Replaces the old per-project localStorage store. Events now live in
+ * the `annotation_events` table (see supabase/migrations/00000000000000_
+ * init.sql), shared across users via RLS instead of the old
+ * origin-wide-localStorage trick — the client who owns the project and
+ * the annotator who tagged it now genuinely share the same rows.
+ *
+ * Exact-duplicate rejection used to be an app-level pre-check here; it's
+ * now a real Postgres unique index (annotation_events_dedupe_idx), so a
+ * double-click race between two inserts can't slip both through. We just
+ * catch Postgres's unique-violation error code (23505) and translate it
+ * to the same user-facing message as before.
  */
+
+import { createClient } from "@/lib/supabase/client";
 
 export type EventType =
   | "two_point"
@@ -73,134 +78,131 @@ export type AnnotationEvent = {
   updatedAt: string;
 };
 
-const KEY_PREFIX = "hornstag_events_v1_";
+type EventRow = {
+  id: string;
+  project_id: string;
+  timestamp_seconds: number;
+  team_side: TeamSide;
+  player_id: string;
+  event_type: EventType;
+  made: boolean | null;
+  shot_x: number | null;
+  shot_y: number | null;
+  custom_label: string | null;
+  period: number | null;
+  created_at: string;
+  updated_at: string;
+};
 
-function isBrowser() {
-  return typeof window !== "undefined";
+function mapEventRow(row: EventRow): AnnotationEvent {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    timestampSeconds: row.timestamp_seconds,
+    teamSide: row.team_side,
+    playerId: row.player_id,
+    eventType: row.event_type,
+    made: row.made ?? undefined,
+    shotLocation: row.shot_x != null && row.shot_y != null ? { x: row.shot_x, y: row.shot_y } : undefined,
+    customLabel: row.custom_label ?? undefined,
+    period: row.period != null ? String(row.period) : undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
-function key(projectId: string) {
-  return `${KEY_PREFIX}${projectId}`;
+export async function getEvents(projectId: string): Promise<AnnotationEvent[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("annotation_events")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("timestamp_seconds", { ascending: true });
+  if (error || !data) return [];
+  return (data as EventRow[]).map(mapEventRow);
 }
 
-function isValidShape(data: unknown): data is AnnotationEvent[] {
-  return (
-    Array.isArray(data) &&
-    data.every(
-      (e) =>
-        e &&
-        typeof e === "object" &&
-        typeof e.id === "string" &&
-        typeof e.timestampSeconds === "number" &&
-        typeof e.playerId === "string" &&
-        typeof e.eventType === "string"
-    )
-  );
-}
-
-function readEvents(projectId: string): AnnotationEvent[] {
-  if (!isBrowser()) return [];
-  try {
-    const raw = window.localStorage.getItem(key(projectId));
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (isValidShape(parsed)) return parsed;
-    }
-  } catch {
-    // Corrupt data — treat as empty.
-  }
-  return [];
-}
-
-function writeEvents(projectId: string, events: AnnotationEvent[]) {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(key(projectId), JSON.stringify(events));
-}
-
-export function getEvents(projectId: string): AnnotationEvent[] {
-  return readEvents(projectId);
-}
-
-export function deleteProjectEvents(projectId: string): void {
-  if (!isBrowser()) return;
-  window.localStorage.removeItem(key(projectId));
+export async function deleteProjectEvents(projectId: string): Promise<void> {
+  const supabase = createClient();
+  await supabase.from("annotation_events").delete().eq("project_id", projectId);
 }
 
 export type NewEventInput = Omit<AnnotationEvent, "id" | "projectId" | "createdAt" | "updatedAt">;
 
-/** Two events are exact duplicates only if EVERY tagged field matches —
- * an assist and the made shot it led to at the same timestamp are never
- * blocked, since eventType (and usually playerId) differ. Only a
- * byte-for-byte re-submission (e.g. a double-click on Save) is rejected. */
-function isExactDuplicate(a: NewEventInput, b: AnnotationEvent): boolean {
-  return (
-    a.timestampSeconds === b.timestampSeconds &&
-    a.teamSide === b.teamSide &&
-    a.playerId === b.playerId &&
-    a.eventType === b.eventType &&
-    (a.made ?? null) === (b.made ?? null) &&
-    (a.shotLocation?.x ?? null) === (b.shotLocation?.x ?? null) &&
-    (a.shotLocation?.y ?? null) === (b.shotLocation?.y ?? null) &&
-    (a.customLabel ?? null) === (b.customLabel ?? null)
-  );
+const DUPLICATE_ERROR = "An identical event already exists at this timestamp.";
+
+function inputToRow(projectId: string, input: NewEventInput) {
+  return {
+    project_id: projectId,
+    timestamp_seconds: input.timestampSeconds,
+    team_side: input.teamSide,
+    player_id: input.playerId,
+    event_type: input.eventType,
+    made: input.made ?? null,
+    shot_x: input.shotLocation?.x ?? null,
+    shot_y: input.shotLocation?.y ?? null,
+    custom_label: input.customLabel ?? null,
+    period: input.period != null ? Number(input.period) : null,
+  };
 }
 
-export function createEvent(
+export async function createEvent(
   projectId: string,
   input: NewEventInput
-): { ok: true; event: AnnotationEvent } | { ok: false; error: string } {
-  const events = readEvents(projectId);
-  if (events.some((e) => isExactDuplicate(input, e))) {
-    return { ok: false, error: "An identical event already exists at this timestamp." };
-  }
+): Promise<{ ok: true; event: AnnotationEvent } | { ok: false; error: string }> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("annotation_events")
+    .insert(inputToRow(projectId, input))
+    .select()
+    .single();
 
-  const now = new Date().toISOString();
-  const event: AnnotationEvent = {
-    id: crypto.randomUUID(),
-    projectId,
-    ...input,
-    createdAt: now,
-    updatedAt: now,
-  };
-  writeEvents(projectId, [...events, event]);
-  return { ok: true, event };
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: DUPLICATE_ERROR };
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, event: mapEventRow(data as EventRow) };
 }
 
-export function updateEvent(
+export async function updateEvent(
   projectId: string,
   eventId: string,
   patch: Partial<NewEventInput>
-): { ok: true; event: AnnotationEvent } | { ok: false; error: string } {
-  const events = readEvents(projectId);
-  const idx = events.findIndex((e) => e.id === eventId);
-  if (idx === -1) return { ok: false, error: "Event not found." };
+): Promise<{ ok: true; event: AnnotationEvent } | { ok: false; error: string }> {
+  const supabase = createClient();
 
-  const candidate: NewEventInput = {
-    timestampSeconds: patch.timestampSeconds ?? events[idx].timestampSeconds,
-    teamSide: patch.teamSide ?? events[idx].teamSide,
-    playerId: patch.playerId ?? events[idx].playerId,
-    eventType: patch.eventType ?? events[idx].eventType,
-    made: "made" in patch ? patch.made : events[idx].made,
-    shotLocation: "shotLocation" in patch ? patch.shotLocation : events[idx].shotLocation,
-    customLabel: "customLabel" in patch ? patch.customLabel : events[idx].customLabel,
-  };
-
-  if (events.some((e, i) => i !== idx && isExactDuplicate(candidate, e))) {
-    return { ok: false, error: "An identical event already exists at this timestamp." };
+  const updates: Record<string, unknown> = {};
+  if (patch.timestampSeconds !== undefined) updates.timestamp_seconds = patch.timestampSeconds;
+  if (patch.teamSide !== undefined) updates.team_side = patch.teamSide;
+  if (patch.playerId !== undefined) updates.player_id = patch.playerId;
+  if (patch.eventType !== undefined) updates.event_type = patch.eventType;
+  if ("made" in patch) updates.made = patch.made ?? null;
+  if ("shotLocation" in patch) {
+    updates.shot_x = patch.shotLocation?.x ?? null;
+    updates.shot_y = patch.shotLocation?.y ?? null;
   }
+  if ("customLabel" in patch) updates.custom_label = patch.customLabel ?? null;
+  if ("period" in patch) updates.period = patch.period != null ? Number(patch.period) : null;
 
-  const updated: AnnotationEvent = {
-    ...events[idx],
-    ...candidate,
-    updatedAt: new Date().toISOString(),
-  };
-  events[idx] = updated;
-  writeEvents(projectId, events);
-  return { ok: true, event: updated };
+  const { data, error } = await supabase
+    .from("annotation_events")
+    .update(updates)
+    .eq("id", eventId)
+    .eq("project_id", projectId)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: DUPLICATE_ERROR };
+    return { ok: false, error: error.message };
+  }
+  if (!data) return { ok: false, error: "Event not found." };
+  return { ok: true, event: mapEventRow(data as EventRow) };
 }
 
-export function deleteEvent(projectId: string, eventId: string): void {
-  writeEvents(projectId, readEvents(projectId).filter((e) => e.id !== eventId));
+export async function deleteEvent(projectId: string, eventId: string): Promise<void> {
+  const supabase = createClient();
+  await supabase.from("annotation_events").delete().eq("id", eventId).eq("project_id", projectId);
 }
 
 /** Made two_point=2, three_point=3, free_throw=1; every miss and every

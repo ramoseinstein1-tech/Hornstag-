@@ -1,10 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { getProjects } from "@/lib/portal/store";
-import { getGlobalProjects } from "@/lib/portal/globalProjects";
+import { getVisibleProjects } from "@/lib/portal/store";
+import type { Project } from "@/lib/portal/store";
 import { getEvents } from "@/lib/portal/events";
 
 function StatTile({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
@@ -20,13 +21,24 @@ function StatTile({ label, value, accent }: { label: string; value: string | num
 
 export default function AnnotatorDashboardPage() {
   const { user } = useAuth();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [eventsTagged, setEventsTagged] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    getVisibleProjects().then(async (all) => {
+      setProjects(all);
+      const claimedByMe = all.filter((p) => p.claimedBy === user.id);
+      const counts = await Promise.all(claimedByMe.map((p) => getEvents(p.id)));
+      setEventsTagged(counts.reduce((sum, evts) => sum + evts.length, 0));
+    });
+  }, [user]);
+
   if (!user) return null;
 
-  const entries = getGlobalProjects();
-  const unclaimed = entries.filter((e) => e.annotationStatus === "Unclaimed");
-  const claimedByMe = entries.filter((e) => e.claimedBy?.annotatorId === user.id);
-  const inProgress = claimedByMe.filter((e) => e.annotationStatus !== "Completed");
-  const eventsTagged = claimedByMe.reduce((sum, e) => sum + getEvents(e.projectId).length, 0);
+  const unclaimed = projects.filter((p) => p.annotationStatus === "Unclaimed");
+  const claimedByMe = projects.filter((p) => p.claimedBy === user.id);
+  const inProgress = claimedByMe.filter((p) => p.annotationStatus !== "Completed");
 
   return (
     <div>
@@ -36,7 +48,7 @@ export default function AnnotatorDashboardPage() {
         <span className="text-gradient-orange">{user.name.split(" ")[0]}.</span>
       </h1>
       <p className="mt-3 max-w-lg text-sm leading-relaxed text-text-muted">
-        Matches uploaded from this same browser show up below, ready to claim and tag.
+        Matches uploaded by any client show up below, ready to claim and tag.
       </p>
 
       <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -68,25 +80,22 @@ export default function AnnotatorDashboardPage() {
           </p>
         ) : (
           <ul className="flex flex-col divide-y divide-border">
-            {claimedByMe.map((entry) => {
-              const project = getProjects(entry.ownerId).find((p) => p.id === entry.projectId);
-              return (
-                <li key={entry.projectId} className="flex items-center justify-between gap-3 py-3 first:pt-0">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm text-text">{project?.name ?? "Untitled match"}</p>
-                    <p className="mt-0.5 font-mono-tech text-[0.56rem] tracking-[0.1em] text-text-faint">
-                      {entry.annotationStatus.toUpperCase()}
-                    </p>
-                  </div>
-                  <Link
-                    href={`/annotator-portal/matches/${entry.projectId}`}
-                    className="flex-none font-mono-tech text-[0.62rem] tracking-[0.1em] text-orange-bright hover:text-orange"
-                  >
-                    OPEN →
-                  </Link>
-                </li>
-              );
-            })}
+            {claimedByMe.map((project) => (
+              <li key={project.id} className="flex items-center justify-between gap-3 py-3 first:pt-0">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-text">{project.name}</p>
+                  <p className="mt-0.5 font-mono-tech text-[0.56rem] tracking-[0.1em] text-text-faint">
+                    {project.annotationStatus.toUpperCase()}
+                  </p>
+                </div>
+                <Link
+                  href={`/annotator-portal/matches/${project.id}`}
+                  className="flex-none font-mono-tech text-[0.62rem] tracking-[0.1em] text-orange-bright hover:text-orange"
+                >
+                  OPEN →
+                </Link>
+              </li>
+            ))}
           </ul>
         )}
       </motion.div>

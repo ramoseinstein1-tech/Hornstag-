@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { updateProfileName, changePassword } from "@/lib/auth/mockAuthStore";
+import { updateProfileName, changePassword } from "@/lib/auth/supabaseAuth";
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (

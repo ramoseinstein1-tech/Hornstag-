@@ -1,18 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
   listAllUsers,
   updateUserRole,
-  deleteAccount,
+  deleteUserAsAdmin,
+  inviteAnnotator,
+  listAnnotatorInvites,
   type AdminUserSummary,
-} from "@/lib/auth/mockAuthStore";
+  type AnnotatorInvite,
+} from "@/lib/auth/supabaseAuth";
 import type { UserRole } from "@/lib/auth/types";
-import { formatRelativeTime, deleteUserData as deleteProjectData } from "@/lib/portal/store";
+import { formatRelativeTime } from "@/lib/portal/store";
 import { deleteUserData as deleteBillingData, getBilling } from "@/lib/portal/billing";
 import { deleteUserData as deleteSettingsData } from "@/lib/portal/settings";
-import { releaseAnnotatorClaims } from "@/lib/portal/globalProjects";
 
 type Filter = "all" | "client" | "annotator" | "admin";
 
@@ -20,41 +22,60 @@ const ROLE_OPTIONS: UserRole[] = ["client", "annotator", "admin"];
 
 export default function AdminUsersPage() {
   const { user: me } = useAuth();
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [users, setUsers] = useState<AdminUserSummary[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [deleteTarget, setDeleteTarget] = useState<AdminUserSummary | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  const users = useMemo(
-    () => listAllUsers(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [refreshKey]
-  );
+  const loadUsers = useCallback(async () => {
+    setUsers(await listAllUsers());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
 
   if (!me) return null;
 
   const filtered = users.filter((u) => filter === "all" || u.role === filter);
 
-  function handleRoleChange(userId: string, role: UserRole) {
-    updateUserRole(userId, role);
-    setRefreshKey((k) => k + 1);
+  async function handleRoleChange(userId: string, role: UserRole) {
+    setError(null);
+    const result = await updateUserRole(userId, role);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    await loadUsers();
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!deleteTarget || deleteConfirm !== deleteTarget.email) return;
+    setError(null);
 
-    deleteAccount(deleteTarget.id);
+    const result = await deleteUserAsAdmin(deleteTarget.id);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+
+    // The real account + every DB row (projects, events, claims, etc.) is
+    // already gone via Supabase's on-delete-cascade (and claimed_by is set
+    // null on any project an annotator had claimed). These two calls are
+    // only cleaning up the OLD localStorage mock data for billing.ts and
+    // settings.ts, which haven't been migrated yet — remove once that
+    // migration lands.
     if (deleteTarget.role === "client") {
-      deleteProjectData(deleteTarget.id);
       deleteBillingData(deleteTarget.id);
       deleteSettingsData(deleteTarget.id);
-    } else if (deleteTarget.role === "annotator") {
-      releaseAnnotatorClaims(deleteTarget.id);
     }
 
     setDeleteTarget(null);
     setDeleteConfirm("");
-    setRefreshKey((k) => k + 1);
+    await loadUsers();
   }
 
   return (
@@ -64,8 +85,14 @@ export default function AdminUsersPage() {
         <span className="text-gradient">Users.</span>
       </h1>
       <p className="mt-3 max-w-lg text-sm leading-relaxed text-text-muted">
-        Every account registered in this browser.
+        Every account registered.
       </p>
+
+      {error && (
+        <div className="mt-4 rounded-md border border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.06] px-4 py-3 font-mono-tech text-[0.68rem] leading-relaxed text-[#ff9b9b]">
+          {error}
+        </div>
+      )}
 
       <div className="mt-8 flex gap-2">
         {(
@@ -100,55 +127,63 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 && (
+              {loading && (
+                <tr>
+                  <td colSpan={5} className="px-5 py-8 text-center text-text-faint">
+                    Loading…
+                  </td>
+                </tr>
+              )}
+              {!loading && filtered.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-5 py-8 text-center text-text-faint">
                     No users match this filter.
                   </td>
                 </tr>
               )}
-              {filtered.map((u) => {
-                const isSelf = u.id === me.id;
-                return (
-                  <tr key={u.id} className="border-b border-border/60 last:border-0">
-                    <td className="px-5 py-3">
-                      <p className="text-text">{u.name}</p>
-                      <p className="mt-0.5 font-mono-tech text-[0.58rem] tracking-[0.04em] text-text-faint">{u.email}</p>
-                    </td>
-                    <td className="px-3 py-3">
-                      <select
-                        className="hs-input !w-auto !py-1.5 !pr-8 !text-xs"
-                        value={u.role}
-                        disabled={isSelf}
-                        onChange={(e) => handleRoleChange(u.id, e.target.value as UserRole)}
-                      >
-                        {ROLE_OPTIONS.map((r) => (
-                          <option key={r} value={r}>
-                            {r.charAt(0).toUpperCase() + r.slice(1)}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-3 py-3 whitespace-nowrap text-text-muted">{formatRelativeTime(u.createdAt)}</td>
-                    <td className="px-3 py-3 text-text-muted">
-                      {u.role === "client" ? getBilling(u.id).planTier : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <button
-                        type="button"
-                        disabled={isSelf}
-                        onClick={() => {
-                          setDeleteTarget(u);
-                          setDeleteConfirm("");
-                        }}
-                        className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-[#ff9b9b] transition-colors hover:text-[#ff6b6b] disabled:cursor-not-allowed disabled:opacity-30"
-                      >
-                        DELETE
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+              {!loading &&
+                filtered.map((u) => {
+                  const isSelf = u.id === me.id;
+                  return (
+                    <tr key={u.id} className="border-b border-border/60 last:border-0">
+                      <td className="px-5 py-3">
+                        <p className="text-text">{u.name}</p>
+                        <p className="mt-0.5 font-mono-tech text-[0.58rem] tracking-[0.04em] text-text-faint">{u.email}</p>
+                      </td>
+                      <td className="px-3 py-3">
+                        <select
+                          className="hs-input !w-auto !py-1.5 !pr-8 !text-xs"
+                          value={u.role}
+                          disabled={isSelf}
+                          onChange={(e) => handleRoleChange(u.id, e.target.value as UserRole)}
+                        >
+                          {ROLE_OPTIONS.map((r) => (
+                            <option key={r} value={r}>
+                              {r.charAt(0).toUpperCase() + r.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-text-muted">{formatRelativeTime(u.createdAt)}</td>
+                      <td className="px-3 py-3 text-text-muted">
+                        {u.role === "client" ? getBilling(u.id).planTier : "—"}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          type="button"
+                          disabled={isSelf}
+                          onClick={() => {
+                            setDeleteTarget(u);
+                            setDeleteConfirm("");
+                          }}
+                          className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-[#ff9b9b] transition-colors hover:text-[#ff6b6b] disabled:cursor-not-allowed disabled:opacity-30"
+                        >
+                          DELETE
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>
@@ -190,6 +225,92 @@ export default function AdminUsersPage() {
             </div>
           </div>
         </div>
+      )}
+
+      <div className="mt-8 hs-panel p-6">
+        <InviteAnnotatorPanel />
+      </div>
+    </div>
+  );
+}
+
+function InviteAnnotatorPanel() {
+  const [invites, setInvites] = useState<AnnotatorInvite[]>([]);
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending">("idle");
+  const [notice, setNotice] = useState<{ text: string; tone: "info" | "error" } | null>(null);
+
+  const loadInvites = useCallback(async () => {
+    setInvites(await listAnnotatorInvites());
+  }, []);
+
+  useEffect(() => {
+    loadInvites();
+  }, [loadInvites]);
+
+  function flash(text: string, tone: "info" | "error" = "info") {
+    setNotice({ text, tone });
+    setTimeout(() => setNotice(null), 4000);
+  }
+
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setStatus("sending");
+    const result = await inviteAnnotator(email);
+    setStatus("idle");
+    if (!result.ok) {
+      flash(result.error, "error");
+      return;
+    }
+    setEmail("");
+    flash("Invited. They can now sign up at /annotator-signup with this email.");
+    await loadInvites();
+  }
+
+  return (
+    <div>
+      <h2 className="mb-2 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">INVITE ANNOTATOR</h2>
+      <p className="mb-4 max-w-lg text-sm text-text-muted">
+        Only invited emails can sign up as an annotator.
+      </p>
+
+      {notice && (
+        <p
+          className={`mb-4 font-mono-tech text-[0.62rem] tracking-wide ${
+            notice.tone === "error" ? "text-[#ff9b9b]" : "text-orange-bright"
+          }`}
+        >
+          {notice.text}
+        </p>
+      )}
+
+      <form onSubmit={handleInvite} className="flex flex-wrap gap-3">
+        <div className="w-full max-w-xs">
+          <input
+            type="email"
+            className="hs-input"
+            placeholder="annotator@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <button type="submit" disabled={status === "sending"} className="hs-btn-secondary disabled:opacity-60">
+          {status === "sending" ? "SENDING..." : "SEND INVITE"}
+        </button>
+      </form>
+
+      {invites.length > 0 && (
+        <ul className="mt-5 flex flex-col divide-y divide-border border-t border-border">
+          {invites.map((invite) => (
+            <li key={invite.id} className="flex items-center justify-between gap-3 py-2.5">
+              <span className="text-sm text-text">{invite.email}</span>
+              <span className="font-mono-tech text-[0.58rem] tracking-[0.08em] text-text-faint">
+                {invite.usedAt ? `USED ${formatRelativeTime(invite.usedAt).toUpperCase()}` : `INVITED ${formatRelativeTime(invite.createdAt).toUpperCase()}`}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

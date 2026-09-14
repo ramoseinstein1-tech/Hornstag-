@@ -149,7 +149,7 @@ export default function UploadProjectPage() {
     return next;
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!user) return;
 
@@ -159,7 +159,7 @@ export default function UploadProjectPage() {
 
     setStatus("submitting");
 
-    createProject(user.id, {
+    await createProject(user.id, {
       name: name.trim(),
       opponent: opponent.trim() || undefined,
       gameDate: gameDate || undefined,
@@ -176,7 +176,7 @@ export default function UploadProjectPage() {
       officialScore: { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) },
     }, user.name);
 
-    setTimeout(() => setStatus("done"), 700);
+    setStatus("done");
   }
 
   if (status === "done") {

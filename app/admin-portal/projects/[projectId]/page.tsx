@@ -1,11 +1,10 @@
 "use client";
 
-import { use, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { getProjects } from "@/lib/portal/store";
-import { getGlobalProjectByProjectId } from "@/lib/portal/globalProjects";
-import { getEvents, pointsForEvent } from "@/lib/portal/events";
-import { getSegments } from "@/lib/portal/segments";
+import { getProject, type Project } from "@/lib/portal/store";
+import { getEvents, pointsForEvent, type AnnotationEvent } from "@/lib/portal/events";
+import { getSegments, type VideoSegment } from "@/lib/portal/segments";
 import { approveAndComplete, sendBackToAnnotator, reopenForReview } from "@/lib/portal/pipeline";
 import VideoPlayer, { type VideoPlayerHandle } from "@/components/annotator-portal/VideoPlayer";
 import EventsTimeline from "@/components/annotator-portal/EventsTimeline";
@@ -20,14 +19,29 @@ export default function AdminProjectReviewPage({
   const { projectId } = use(params);
   const videoRef = useRef<VideoPlayerHandle>(null);
   const [duration, setDuration] = useState(0);
-  // Unread on purpose — bumping it forces a re-render so a fresh read of
-  // the global index (not memoized) is picked up right after a QA action.
-  const [, setRefreshKey] = useState(0);
+  const [project, setProject] = useState<Project | null | undefined>(undefined);
+  const [events, setEvents] = useState<AnnotationEvent[]>([]);
+  const [segments, setSegments] = useState<VideoSegment[] | null>(null);
 
-  const entry = getGlobalProjectByProjectId(projectId);
-  const project = entry ? getProjects(entry.ownerId).find((p) => p.id === entry.projectId) : undefined;
+  async function refresh() {
+    const [p, evts, segs] = await Promise.all([
+      getProject(projectId),
+      getEvents(projectId),
+      getSegments(projectId),
+    ]);
+    setProject(p);
+    setEvents(evts);
+    setSegments(segs);
+  }
 
-  if (!entry || !project) {
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  if (project === undefined) return null;
+
+  if (!project) {
     return (
       <div className="hs-panel mx-auto max-w-md p-8 text-center">
         <p className="text-sm text-text-muted">This project couldn&rsquo;t be found.</p>
@@ -38,9 +52,6 @@ export default function AdminProjectReviewPage({
     );
   }
 
-  const events = getEvents(project.id);
-  const segments = getSegments(project.id);
-  const ownerId = entry.ownerId;
   const taggedTeamScore = events.filter((e) => e.teamSide === "team").reduce((sum, e) => sum + pointsForEvent(e), 0);
   const taggedOpponentScore = events
     .filter((e) => e.teamSide === "opponent")
@@ -52,21 +63,17 @@ export default function AdminProjectReviewPage({
     videoRef.current?.seekTo(seconds);
   }
 
-  function refresh() {
-    setRefreshKey((k) => k + 1);
+  async function handleApprove() {
+    await approveAndComplete(projectId);
+    await refresh();
   }
-
-  function handleApprove() {
-    approveAndComplete(ownerId, projectId);
-    refresh();
+  async function handleSendBack() {
+    await sendBackToAnnotator(projectId);
+    await refresh();
   }
-  function handleSendBack() {
-    sendBackToAnnotator(ownerId, projectId);
-    refresh();
-  }
-  function handleReopen() {
-    reopenForReview(ownerId, projectId);
-    refresh();
+  async function handleReopen() {
+    await reopenForReview(projectId);
+    await refresh();
   }
 
   return (
@@ -76,21 +83,21 @@ export default function AdminProjectReviewPage({
         <h1 className="display-md uppercase">
           <span className="text-gradient">{project.name}</span>
         </h1>
-        <span className="hs-chip">{entry.annotationStatus.toUpperCase()}</span>
+        <span className="hs-chip">{project.annotationStatus.toUpperCase()}</span>
       </div>
       <p className="mt-1 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
-        OWNER {entry.ownerName.toUpperCase()} · {project.format.toUpperCase()}
-        {entry.claimedBy && ` · ANNOTATED BY ${entry.claimedBy.annotatorName.toUpperCase()}`}
+        OWNER {project.ownerName.toUpperCase()} · {project.format.toUpperCase()}
+        {project.claimedByName && ` · ANNOTATED BY ${project.claimedByName.toUpperCase()}`}
         {` · ${events.length} EVENTS`}
         {segments ? " · VIDEO SEGMENTED" : " · VIDEO NOT YET SEGMENTED"}
       </p>
 
-      {entry.submissionNote && (
+      {project.submissionNote && (
         <div className="hs-panel mt-4 p-4" style={{ borderColor: "var(--border-orange)" }}>
           <p className="mb-1.5 font-mono-tech text-[0.58rem] tracking-[0.14em] text-orange-bright">
             ANNOTATOR NOTE
           </p>
-          <p className="text-sm leading-relaxed text-text-muted">{entry.submissionNote}</p>
+          <p className="text-sm leading-relaxed text-text-muted">{project.submissionNote}</p>
         </div>
       )}
 
@@ -142,7 +149,7 @@ export default function AdminProjectReviewPage({
           )}
 
           <div className="hs-panel p-4">
-            {entry.annotationStatus === "In Review" && (
+            {project.annotationStatus === "In Review" && (
               <div className="flex flex-wrap gap-2.5">
                 <button onClick={handleApprove} className="hs-btn-primary">
                   APPROVE &amp; COMPLETE
@@ -152,7 +159,7 @@ export default function AdminProjectReviewPage({
                 </button>
               </div>
             )}
-            {entry.annotationStatus === "Completed" && (
+            {project.annotationStatus === "Completed" && (
               <div className="flex flex-wrap items-center gap-3">
                 <span className="hs-chip !border-orange/50 !text-orange-bright">COMPLETED — RELAYED TO CLIENT</span>
                 <button onClick={handleReopen} className="hs-btn-ghost">
@@ -160,7 +167,7 @@ export default function AdminProjectReviewPage({
                 </button>
               </div>
             )}
-            {(entry.annotationStatus === "Unclaimed" || entry.annotationStatus === "Claimed") && (
+            {(project.annotationStatus === "Unclaimed" || project.annotationStatus === "Claimed") && (
               <p className="text-xs text-text-faint">Nothing submitted for QA review yet.</p>
             )}
           </div>

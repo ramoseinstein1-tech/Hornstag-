@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { getProjects, getActivity, formatRelativeTime } from "@/lib/portal/store";
-import type { ProjectStatus } from "@/lib/portal/store";
+import type { ActivityEntry, Project, ProjectStatus } from "@/lib/portal/store";
 
 function StatusBadge({ status }: { status: ProjectStatus }) {
   const styles: Record<ProjectStatus, string> = {
@@ -28,8 +29,14 @@ export default function ClientPortalDashboard() {
   const { user } = useAuth();
   const firstName = user?.name?.trim().split(/\s+/)[0] || "there";
 
-  const projects = user ? getProjects(user.id) : [];
-  const activity = user ? getActivity(user.id) : [];
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    getProjects(user.id).then(setProjects);
+    getActivity(user.id).then(setActivity);
+  }, [user]);
 
   const activeCount = projects.filter(
     (p) => p.status === "Processing" || p.status === "In Progress"

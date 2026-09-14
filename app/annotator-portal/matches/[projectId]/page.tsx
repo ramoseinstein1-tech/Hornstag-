@@ -1,10 +1,9 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { getProjects } from "@/lib/portal/store";
-import { getGlobalProjectByProjectId } from "@/lib/portal/globalProjects";
+import { getProject, type Project } from "@/lib/portal/store";
 import { claimForAnnotation } from "@/lib/portal/pipeline";
 import AnnotationWorkspace from "@/components/annotator-portal/AnnotationWorkspace";
 
@@ -15,17 +14,21 @@ export default function MatchWorkspacePage({
 }) {
   const { projectId } = use(params);
   const { user } = useAuth();
-  // Unread on purpose — bumping it just forces a re-render so the fresh
-  // claim status (read directly from localStorage below, not memoized) is
-  // picked up immediately after claiming.
-  const [, setRefreshKey] = useState(0);
+  const [project, setProject] = useState<Project | null | undefined>(undefined);
+  const [claiming, setClaiming] = useState(false);
 
-  if (!user) return null;
+  async function refresh() {
+    setProject(await getProject(projectId));
+  }
 
-  const entry = getGlobalProjectByProjectId(projectId);
-  const project = entry ? getProjects(entry.ownerId).find((p) => p.id === entry.projectId) : undefined;
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
-  if (!entry || !project) {
+  if (!user || project === undefined) return null;
+
+  if (!project) {
     return (
       <div className="hs-panel mx-auto max-w-md p-8 text-center">
         <p className="text-sm text-text-muted">This match couldn&rsquo;t be found.</p>
@@ -36,7 +39,7 @@ export default function MatchWorkspacePage({
     );
   }
 
-  const claimedByMe = entry.claimedBy?.annotatorId === user.id;
+  const claimedByMe = project.claimedBy === user.id;
 
   if (!claimedByMe) {
     return (
@@ -48,17 +51,20 @@ export default function MatchWorkspacePage({
           TRACKED BY {project.format.toUpperCase()}
         </p>
         <p className="mt-3 text-sm leading-relaxed text-text-muted">
-          {entry.annotationStatus === "Unclaimed"
+          {project.annotationStatus === "Unclaimed"
             ? "Claim this match to start annotating."
-            : `Already claimed by ${entry.claimedBy?.annotatorName ?? "another annotator"}.`}
+            : `Already claimed by ${project.claimedByName ?? "another annotator"}.`}
         </p>
-        {entry.annotationStatus === "Unclaimed" && (
+        {project.annotationStatus === "Unclaimed" && (
           <button
-            onClick={() => {
-              claimForAnnotation(entry.ownerId, projectId, { id: user.id, name: user.name });
-              setRefreshKey((k) => k + 1);
+            onClick={async () => {
+              setClaiming(true);
+              await claimForAnnotation(projectId);
+              await refresh();
+              setClaiming(false);
             }}
-            className="hs-btn-primary mt-6"
+            disabled={claiming}
+            className="hs-btn-primary mt-6 disabled:cursor-wait disabled:opacity-70"
           >
             CLAIM TO START ANNOTATING
           </button>
@@ -73,11 +79,5 @@ export default function MatchWorkspacePage({
     );
   }
 
-  return (
-    <AnnotationWorkspace
-      project={project}
-      ownerId={entry.ownerId}
-      annotationStatus={entry.annotationStatus}
-    />
-  );
+  return <AnnotationWorkspace project={project} annotationStatus={project.annotationStatus} />;
 }

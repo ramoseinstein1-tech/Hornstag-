@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { getProjects } from "@/lib/portal/store";
+import type { Project } from "@/lib/portal/store";
 import { getBilling, changePlan, downloadInvoice, PLANS } from "@/lib/portal/billing";
 import type { PlanTier } from "@/lib/portal/billing";
 
@@ -29,11 +30,13 @@ function BillingPageContent() {
   const [noticeTone, setNoticeTone] = useState<"info" | "error">("info");
   const [checkoutLoading, setCheckoutLoading] = useState<PlanTier | null>(null);
 
-  const projects = useMemo(
-    () => (user ? getProjects(user.id) : []),
+  const [projects, setProjects] = useState<Project[]>([]);
+  useEffect(() => {
+    if (!user) return;
+    getProjects(user.id).then(setProjects);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [user, refreshKey]
-  );
+  }, [user, refreshKey]);
+
   const billing = useMemo(
     () => (user ? getBilling(user.id) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -4,6 +4,9 @@
  * This file has zero browser-only APIs (no localStorage/document/crypto) so
  * it is safe to import from both client components AND `middleware.ts`,
  * which runs in the Edge runtime and has no DOM.
+ *
+ * The real session itself is now managed entirely by Supabase Auth (via
+ * @supabase/ssr's cookies) — there is no more hand-rolled SESSION_COOKIE.
  */
 
 export type UserRole = "client" | "annotator" | "admin";
@@ -15,13 +18,11 @@ export type SessionUser = {
   role: UserRole;
 };
 
-/** Where each role lands after signing in. Only "client" and "annotator"
- * are built today — admin is reserved so an Admin dashboard can be dropped
- * in later without touching the redirect logic. */
+/** Where each role lands after signing in. */
 export const ROLE_HOME: Record<UserRole, string> = {
   client: "/client-portal",
   annotator: "/annotator-portal",
-  admin: "/admin-portal", // not yet built
+  admin: "/admin-portal",
 };
 
 /** Where each role's sign-in form lives — a separate portal per role, not
@@ -29,7 +30,5 @@ export const ROLE_HOME: Record<UserRole, string> = {
 export const ROLE_SIGNIN: Record<UserRole, string> = {
   client: "/signin",
   annotator: "/annotator-signin",
-  admin: "/admin-signin", // not yet built
+  admin: "/admin-signin",
 };
-
-export const SESSION_COOKIE = "hornstag_session";

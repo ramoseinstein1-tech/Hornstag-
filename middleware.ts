@@ -1,20 +1,7 @@
 import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 import type { NextRequest } from "next/server";
-import { SESSION_COOKIE, ROLE_HOME, type SessionUser } from "@/lib/auth/types";
-
-function readSession(request: NextRequest): SessionUser | null {
-  const raw = request.cookies.get(SESSION_COOKIE)?.value;
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(decodeURIComponent(raw));
-    if (parsed && typeof parsed.role === "string") {
-      return parsed as SessionUser;
-    }
-  } catch {
-    // Malformed cookie — treat as signed out.
-  }
-  return null;
-}
+import { ROLE_HOME, type UserRole } from "@/lib/auth/types";
 
 const AUTH_ROUTES = [
   "/signin",
@@ -24,9 +11,37 @@ const AUTH_ROUTES = [
   "/admin-signin",
 ];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const session = readSession(request);
+
+  let response = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+        },
+      },
+    }
+  );
+
+  const {
+    data: { user: authUser },
+  } = await supabase.auth.getUser();
+
+  let role: UserRole | null = null;
+  if (authUser) {
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", authUser.id).single();
+    role = (profile?.role as UserRole) ?? null;
+  }
 
   const isClientPortalRoute = pathname.startsWith("/client-portal");
   const isAnnotatorPortalRoute = pathname.startsWith("/annotator-portal");
@@ -34,7 +49,7 @@ export function middleware(request: NextRequest) {
   const isAuthRoute = AUTH_ROUTES.includes(pathname);
 
   // Unauthenticated users can't reach the client portal.
-  if (isClientPortalRoute && !session) {
+  if (isClientPortalRoute && !authUser) {
     const signInUrl = new URL("/signin", request.url);
     signInUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(signInUrl);
@@ -42,7 +57,7 @@ export function middleware(request: NextRequest) {
 
   // Unauthenticated users can't reach the annotator portal either — sent to
   // its own sign-in, not the client one.
-  if (isAnnotatorPortalRoute && !session) {
+  if (isAnnotatorPortalRoute && !authUser) {
     const signInUrl = new URL("/annotator-signin", request.url);
     signInUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(signInUrl);
@@ -50,19 +65,19 @@ export function middleware(request: NextRequest) {
 
   // Same for the admin portal. Note /admin-bootstrap is deliberately NOT
   // gated here — it must work before any session exists.
-  if (isAdminPortalRoute && !session) {
+  if (isAdminPortalRoute && !authUser) {
     const signInUrl = new URL("/admin-signin", request.url);
     signInUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(signInUrl);
   }
 
   // Already-signed-in users don't need any sign-in/sign-up form.
-  if (isAuthRoute && session) {
-    const home = ROLE_HOME[session.role] ?? "/client-portal";
+  if (isAuthRoute && authUser && role) {
+    const home = ROLE_HOME[role] ?? "/client-portal";
     return NextResponse.redirect(new URL(home, request.url));
   }
 
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {

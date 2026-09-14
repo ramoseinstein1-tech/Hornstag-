@@ -4,8 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { updateProfileName, changePassword, deleteAccount, clearSession } from "@/lib/auth/mockAuthStore";
-import { deleteUserData as deleteProjectData } from "@/lib/portal/store";
+import { updateProfileName, changePassword, deleteOwnAccount, clearSession } from "@/lib/auth/supabaseAuth";
 import { deleteUserData as deleteBillingData } from "@/lib/portal/billing";
 import {
   getSettings,
@@ -151,13 +150,21 @@ export default function AccountSettingsPage() {
     setRefreshKey((k) => k + 1);
   }
 
-  function handleDeleteAccount() {
+  async function handleDeleteAccount() {
     if (!user || deleteConfirm !== user.email) return;
-    deleteAccount(user.id);
-    deleteProjectData(user.id);
+    const result = await deleteOwnAccount();
+    if (!result.ok) {
+      flashNotice(result.error, "error");
+      return;
+    }
+    // The real account + every DB row (projects, events, billing, etc.)
+    // is already gone via Supabase's on-delete-cascade. These two calls
+    // are only cleaning up the OLD localStorage mock data for billing.ts
+    // and settings.ts, which haven't been migrated yet — remove once
+    // that migration lands.
     deleteBillingData(user.id);
     deleteSettingsData(user.id);
-    clearSession();
+    await clearSession();
     // A full hard navigation, not router.push(). A client-side transition
     // to "/" isn't instant (it fetches the route), and in that window this
     // very page's ClientPortalGuard would otherwise see the auth context

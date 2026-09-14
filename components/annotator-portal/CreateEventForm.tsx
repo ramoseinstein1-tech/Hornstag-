@@ -71,7 +71,7 @@ export default function CreateEventForm({
   project: Project;
   currentTimeSeconds: number;
   editingEvent: AnnotationEvent | null;
-  onSave: (input: NewEventInput) => { ok: boolean; error?: string };
+  onSave: (input: NewEventInput) => Promise<{ ok: boolean; error?: string }>;
   onCancelEdit: () => void;
   activeSegmentLabel?: string;
 }) {
@@ -122,7 +122,7 @@ export default function CreateEventForm({
     setError(null);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
@@ -154,7 +154,7 @@ export default function CreateEventForm({
       customLabel: eventType === "custom" ? customLabel.trim() || undefined : undefined,
     };
 
-    const result = onSave(input);
+    const result = await onSave(input);
     if (!result.ok) {
       // Inline error, inputs preserved — never a native alert(), and never
       // silently discards what the annotator just filled in.

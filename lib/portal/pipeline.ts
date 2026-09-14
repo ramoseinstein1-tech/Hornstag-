@@ -1,69 +1,37 @@
 /**
  * ANNOTATION PIPELINE COORDINATOR
  * ─────────────────────────────────────────────────────────────────
- * There are two status enums tracking the same 4 conceptual stages:
- * GlobalAnnotationStatus (globalProjects.ts — driven by annotator/admin
- * actions) and Project.status (store.ts — what the CLIENT'S Results page
- * actually gates on). Before this file existed, `Project.status` was set
- * once at creation and never updated again, so the Results page was
- * permanently stuck showing "still processing" for every real project.
+ * Every status transition (claim / submit / approve / send back / reopen /
+ * unassign) is now a single Postgres `security definer` RPC (see
+ * supabase/migrations/00000000000000_init.sql) that atomically updates
+ * both `projects.status` and `projects.annotation_status` together and
+ * checks caller role + current status against the valid-transition
+ * allow-list server-side. That's what used to require this file to
+ * juggle two separate localStorage stores (globalProjects.ts +
+ * store.ts) and a STATUS_MAP/PROGRESS_MAP translation table — none of
+ * that exists anymore, so this file is just thin async wrappers.
  *
- * This module is the ONLY place that should drive a status transition —
- * it keeps both enums in sync and encodes the actual valid state machine
- * (who can move a project from what to what), replacing the raw
- * `setAnnotationStatus(id, anyStatus)` escape hatch that used to let any
- * caller (e.g. the admin board's old status <select>) jump to any status
- * with no gating at all.
- *
- * Lives as its own file rather than inside either store.ts or
- * globalProjects.ts because store.ts already imports FROM globalProjects
- * (publishProjectToGlobalIndex) — a reverse import to call a status setter
- * would create a cycle. A coordinator that imports one-way from both
- * leaves avoids that while keeping each leaf module single-purpose.
+ * Every function below derives the caller's identity from the Supabase
+ * session server-side (`auth.uid()`) rather than taking an `ownerId`/
+ * `annotator` argument — the RPCs simply reject the call if the caller
+ * isn't allowed to make that transition.
  */
 
-import {
-  claimProject as claimGlobalProject,
-  unclaimProject as unclaimGlobalProject,
-  setAnnotationStatus,
-  setSubmissionNote,
-  type GlobalAnnotationStatus,
-  type GlobalProjectEntry,
-} from "./globalProjects";
-import { setProjectStatus, getProjects, addActivity, type ProjectStatus } from "./store";
+import { createClient } from "@/lib/supabase/client";
 
-const STATUS_MAP: Record<GlobalAnnotationStatus, ProjectStatus> = {
-  Unclaimed: "Processing",
-  Claimed: "In Progress",
-  "In Review": "Needs Review",
-  Completed: "Completed",
-};
+type RpcResult = { ok: true } | { ok: false; error: string };
 
-const PROGRESS_MAP: Record<ProjectStatus, number> = {
-  Processing: 4,
-  "In Progress": 50,
-  "Needs Review": 90,
-  Completed: 100,
-};
-
-function transition(ownerId: string, projectId: string, next: GlobalAnnotationStatus): void {
-  setAnnotationStatus(projectId, next);
-  const status = STATUS_MAP[next];
-  setProjectStatus(ownerId, projectId, status, PROGRESS_MAP[status]);
+async function callRpc(fn: string, args: Record<string, unknown>): Promise<RpcResult> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc(fn, args);
+  if (error) return { ok: false, error: error.message };
+  if (data === false) return { ok: false, error: "That action isn't allowed right now." };
+  return { ok: true };
 }
 
 /** Annotator: claim an Unclaimed match. */
-export function claimForAnnotation(
-  ownerId: string,
-  projectId: string,
-  annotator: { id: string; name: string }
-): { ok: true; entry: GlobalProjectEntry } | { ok: false; error: string } {
-  const result = claimGlobalProject(projectId, annotator);
-  if (result.ok) {
-    const status = STATUS_MAP.Claimed;
-    setProjectStatus(ownerId, projectId, status, PROGRESS_MAP[status]);
-  }
-  return result;
+export function claimForAnnotation(projectId: string): Promise<RpcResult> {
+  return callRpc("claim_for_annotation", { target_project_id: projectId });
 }
 
 /** Annotator: Claimed -> In Review ("Submit for Review"). Submission is a
@@ -71,40 +39,30 @@ export function claimForAnnotation(
  * here (approve, or send back), matching the QA-owns-completion model.
  * `note` is optional free text the annotator can leave for QA — e.g. to
  * explain a score discrepancy — shown on the admin review page. */
-export function submitForReview(ownerId: string, projectId: string, note?: string): void {
-  transition(ownerId, projectId, "In Review");
-  setSubmissionNote(projectId, note && note.trim() ? note.trim() : undefined);
+export function submitForReview(projectId: string, note?: string): Promise<RpcResult> {
+  return callRpc("submit_for_review", { target_project_id: projectId, note: note ?? null });
 }
 
 /** Admin only: In Review -> Completed. This is the moment real annotated
- * results become visible on the client's Results page — and the moment
- * the homepage's promised "reports, dashboards and decisions" deliverable
- * actually needs to land on the client's end, not just theoretically be
- * available if they happen to check. Pushing an activity entry is what
- * makes that concrete and visible on their dashboard. */
-export function approveAndComplete(ownerId: string, projectId: string): void {
-  transition(ownerId, projectId, "Completed");
-  const project = getProjects(ownerId).find((p) => p.id === projectId);
-  if (project) {
-    addActivity(ownerId, `QA approved — results for "${project.name}" are ready to view.`);
-  }
+ * results become visible on the client's Results page — the RPC itself
+ * pushes the client's activity-feed entry server-side. */
+export function approveAndComplete(projectId: string): Promise<RpcResult> {
+  return callRpc("approve_and_complete", { target_project_id: projectId });
 }
 
 /** Admin only: In Review -> Claimed (QA rejection, sent back for fixes). */
-export function sendBackToAnnotator(ownerId: string, projectId: string): void {
-  transition(ownerId, projectId, "Claimed");
+export function sendBackToAnnotator(projectId: string): Promise<RpcResult> {
+  return callRpc("send_back_to_annotator", { target_project_id: projectId });
 }
 
 /** Admin only: Completed -> In Review (reopen a signed-off project). */
-export function reopenForReview(ownerId: string, projectId: string): void {
-  transition(ownerId, projectId, "In Review");
+export function reopenForReview(projectId: string): Promise<RpcResult> {
+  return callRpc("reopen_for_review", { target_project_id: projectId });
 }
 
 /** Admin moderation: unassign the annotator from a stuck Claimed/In Review
  * project, returning it to Unclaimed. Not offered for Completed rows by
  * the UI — see app/admin-portal/projects. */
-export function unassignAnnotator(ownerId: string, projectId: string): void {
-  unclaimGlobalProject(projectId);
-  const status = STATUS_MAP.Unclaimed;
-  setProjectStatus(ownerId, projectId, status, PROGRESS_MAP[status]);
+export function unassignAnnotator(projectId: string): Promise<RpcResult> {
+  return callRpc("unassign_annotator", { target_project_id: projectId });
 }

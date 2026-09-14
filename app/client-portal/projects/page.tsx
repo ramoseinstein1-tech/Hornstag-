@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -171,7 +171,12 @@ export default function ProjectsPage() {
   const { user } = useAuth();
   const [filter, setFilter] = useState<"All" | ProjectStatus>("All");
 
-  const allProjects = useMemo(() => (user ? getProjects(user.id) : []), [user]);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    getProjects(user.id).then(setAllProjects);
+  }, [user]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};

@@ -14,7 +14,7 @@ export default function AnnotatorSignUpPage() {
       eyebrow="ANNOTATOR SIGN UP"
       title="Start"
       titleAccent="annotating."
-      subtitle="Create your annotator workspace to claim and tag game film."
+      subtitle="Create your annotator workspace to claim and tag game film. You'll need to have been invited by an admin first."
       footer={
         <>
           <p>

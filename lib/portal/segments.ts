@@ -1,18 +1,20 @@
 /**
- * MOCK, PER-PROJECT VIDEO SEGMENTATION STORE
+ * REAL, SUPABASE-BACKED VIDEO SEGMENTATION STORE
  * ─────────────────────────────────────────────────────────────────
  * Before tagging events, the annotator must cut the game video into its
  * periods (quarters or halves, per the client's chosen GameFormat) so
- * events can be attributed to the right period later. Since this demo
- * has no real per-project video (every workspace plays the same shared
- * sample clip, see VideoPlayer.tsx), "cutting" the video means marking
- * timestamp boundaries within that shared clip rather than splitting an
- * actual file — the boundaries are what's real and persisted here.
- *
- * Stored per-project (hornstag_segments_v1_${projectId}), matching
- * lib/portal/events.ts's per-project keying (not per-user), since these
- * boundaries describe the match itself.
+ * events can be attributed to the right period later. Since there's no
+ * real per-project video yet (Phase 2 of the backend migration — every
+ * workspace still plays the same shared sample clip, see
+ * VideoPlayer.tsx), "cutting" the video means marking timestamp
+ * boundaries within that shared clip rather than splitting an actual
+ * file — the boundaries are what's real and now persisted in the
+ * `video_segments` table (see supabase/migrations/00000000000000_init.sql),
+ * shared between the client and annotator via RLS instead of the old
+ * origin-wide-localStorage trick.
  */
+
+import { createClient } from "@/lib/supabase/client";
 
 export type VideoSegment = {
   label: string;
@@ -20,55 +22,53 @@ export type VideoSegment = {
   endSeconds: number;
 };
 
-const KEY_PREFIX = "hornstag_segments_v1_";
-
-function isBrowser() {
-  return typeof window !== "undefined";
-}
-
-function key(projectId: string) {
-  return `${KEY_PREFIX}${projectId}`;
-}
-
-function isValidShape(data: unknown): data is VideoSegment[] {
-  return (
-    Array.isArray(data) &&
-    data.length > 0 &&
-    data.every(
-      (s) =>
-        s &&
-        typeof s === "object" &&
-        typeof s.label === "string" &&
-        typeof s.startSeconds === "number" &&
-        typeof s.endSeconds === "number"
-    )
-  );
-}
+type SegmentRow = {
+  label: string;
+  start_seconds: number;
+  end_seconds: number;
+  sort_order: number;
+};
 
 /** Null means the video hasn't been segmented yet — the annotate tab
  * stays locked until this returns a real array. */
-export function getSegments(projectId: string): VideoSegment[] | null {
-  if (!isBrowser()) return null;
-  try {
-    const raw = window.localStorage.getItem(key(projectId));
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (isValidShape(parsed)) return parsed;
-    }
-  } catch {
-    // Corrupt data — treat as not-yet-segmented.
+export async function getSegments(projectId: string): Promise<VideoSegment[] | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("video_segments")
+    .select("label, start_seconds, end_seconds, sort_order")
+    .eq("project_id", projectId)
+    .order("sort_order", { ascending: true });
+
+  if (error || !data || data.length === 0) return null;
+  return (data as SegmentRow[]).map((r) => ({
+    label: r.label,
+    startSeconds: r.start_seconds,
+    endSeconds: r.end_seconds,
+  }));
+}
+
+/** Replaces the project's segments wholesale — callers always pass the
+ * complete boundary list, so delete-then-insert matches existing
+ * "whole array replacement" semantics rather than diffing. */
+export async function saveSegments(projectId: string, segments: VideoSegment[]): Promise<void> {
+  const supabase = createClient();
+  await supabase.from("video_segments").delete().eq("project_id", projectId);
+  if (segments.length > 0) {
+    await supabase.from("video_segments").insert(
+      segments.map((s, i) => ({
+        project_id: projectId,
+        label: s.label,
+        start_seconds: s.startSeconds,
+        end_seconds: s.endSeconds,
+        sort_order: i,
+      }))
+    );
   }
-  return null;
 }
 
-export function saveSegments(projectId: string, segments: VideoSegment[]): void {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(key(projectId), JSON.stringify(segments));
-}
-
-export function deleteProjectSegments(projectId: string): void {
-  if (!isBrowser()) return;
-  window.localStorage.removeItem(key(projectId));
+export async function deleteProjectSegments(projectId: string): Promise<void> {
+  const supabase = createClient();
+  await supabase.from("video_segments").delete().eq("project_id", projectId);
 }
 
 /** Which period a timestamp falls in, derived from the real boundaries —

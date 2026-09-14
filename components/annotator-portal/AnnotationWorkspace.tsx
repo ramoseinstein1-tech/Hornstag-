@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { updateRoster, type Project, type RosterPlayer } from "@/lib/portal/store";
-import type { GlobalAnnotationStatus } from "@/lib/portal/globalProjects";
+import { updateRoster, type AnnotationStatus, type Project, type RosterPlayer } from "@/lib/portal/store";
 import {
   createEvent,
   deleteEvent,
@@ -36,22 +35,29 @@ const TABS: { key: Tab; label: string }[] = [
 
 export default function AnnotationWorkspace({
   project,
-  ownerId,
   annotationStatus,
 }: {
   project: Project;
-  ownerId: string;
-  annotationStatus: GlobalAnnotationStatus;
+  annotationStatus: AnnotationStatus;
 }) {
   const videoRef = useRef<VideoPlayerHandle>(null);
   const [currentProject, setCurrentProject] = useState<Project>(project);
-  const [events, setEvents] = useState<AnnotationEvent[]>(() => getEvents(project.id));
-  const [segments, setSegments] = useState<VideoSegment[] | null>(() => getSegments(project.id));
+  const [events, setEvents] = useState<AnnotationEvent[]>([]);
+  const [segments, setSegments] = useState<VideoSegment[] | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [editingEvent, setEditingEvent] = useState<AnnotationEvent | null>(null);
-  const [tab, setTab] = useState<Tab>(segments ? "annotate" : "segments");
+  const [tab, setTab] = useState<Tab>("segments");
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
+
+  useEffect(() => {
+    getEvents(project.id).then(setEvents);
+    getSegments(project.id).then((s) => {
+      setSegments(s);
+      setTab(s ? "annotate" : "segments");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
 
   // "Claimed" is the only status this workspace is ever reached with while
   // still editable — once submitted ("In Review") or QA'd ("Completed"),
@@ -78,8 +84,8 @@ export default function AnnotationWorkspace({
     setCurrentTime(seconds);
   }
 
-  function handleSaveSegments(newSegments: VideoSegment[]) {
-    saveSegments(currentProject.id, newSegments);
+  async function handleSaveSegments(newSegments: VideoSegment[]) {
+    await saveSegments(currentProject.id, newSegments);
     setSegments(newSegments);
     setActiveSegmentIndex(0);
     setTab("annotate");
@@ -91,27 +97,27 @@ export default function AnnotationWorkspace({
     handleSeek(segments[index].startSeconds);
   }
 
-  function handleSave(input: NewEventInput): { ok: boolean; error?: string } {
+  async function handleSave(input: NewEventInput): Promise<{ ok: boolean; error?: string }> {
     const period = segments ? periodForTimestamp(segments, input.timestampSeconds) : undefined;
     const enrichedInput: NewEventInput = { ...input, period };
     if (editingEvent) {
-      const result = updateEvent(currentProject.id, editingEvent.id, enrichedInput);
-      if (result.ok) setEvents(getEvents(currentProject.id));
+      const result = await updateEvent(currentProject.id, editingEvent.id, enrichedInput);
+      if (result.ok) setEvents(await getEvents(currentProject.id));
       return result;
     }
-    const result = createEvent(currentProject.id, enrichedInput);
-    if (result.ok) setEvents(getEvents(currentProject.id));
+    const result = await createEvent(currentProject.id, enrichedInput);
+    if (result.ok) setEvents(await getEvents(currentProject.id));
     return result;
   }
 
-  function handleDelete(eventId: string) {
-    deleteEvent(currentProject.id, eventId);
-    setEvents(getEvents(currentProject.id));
+  async function handleDelete(eventId: string) {
+    await deleteEvent(currentProject.id, eventId);
+    setEvents(await getEvents(currentProject.id));
     if (editingEvent?.id === eventId) setEditingEvent(null);
   }
 
-  function handleSaveRoster(roster: RosterPlayer[], opponentRoster?: RosterPlayer[]) {
-    const updated = updateRoster(ownerId, currentProject.id, roster, opponentRoster);
+  async function handleSaveRoster(roster: RosterPlayer[], opponentRoster?: RosterPlayer[]) {
+    const updated = await updateRoster(currentProject.id, roster, opponentRoster);
     if (updated) setCurrentProject(updated);
   }
 

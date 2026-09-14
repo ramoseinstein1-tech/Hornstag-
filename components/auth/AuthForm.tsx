@@ -5,13 +5,12 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "./AuthProvider";
-import { registerUser, authenticateUser, setSession } from "@/lib/auth/mockAuthStore";
+import { registerUser, registerAnnotator, authenticateUser } from "@/lib/auth/supabaseAuth";
 import { ROLE_HOME, type UserRole } from "@/lib/auth/types";
-import { ANNOTATOR_ACCESS_CODE } from "@/lib/auth/annotatorAccessCode";
 
 type Mode = "signin" | "signup";
 
-type Errors = Partial<Record<"name" | "email" | "password" | "confirm" | "accessCode", string>>;
+type Errors = Partial<Record<"name" | "email" | "password" | "confirm", string>>;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -29,7 +28,6 @@ const STRENGTH_LABEL = ["TOO SHORT", "WEAK", "FAIR", "STRONG", "EXCELLENT"];
 
 export default function AuthForm({ mode, role = "client" }: { mode: Mode; role?: UserRole }) {
   const isSignup = mode === "signup";
-  const isAnnotatorSignup = isSignup && role === "annotator";
   const router = useRouter();
   const searchParams = useSearchParams();
   const { refresh: refreshAuth } = useAuth();
@@ -38,9 +36,7 @@ export default function AuthForm({ mode, role = "client" }: { mode: Mode; role?:
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [accessCode, setAccessCode] = useState("");
   const [showPw, setShowPw] = useState(false);
-  const [remember, setRemember] = useState(true);
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading">("idle");
@@ -61,9 +57,6 @@ export default function AuthForm({ mode, role = "client" }: { mode: Mode; role?:
     if (isSignup && confirm !== password) {
       next.confirm = "Passwords do not match.";
     }
-    if (isAnnotatorSignup && accessCode.trim() !== ANNOTATOR_ACCESS_CODE) {
-      next.accessCode = "Invalid access code.";
-    }
     return next;
   }
 
@@ -77,7 +70,9 @@ export default function AuthForm({ mode, role = "client" }: { mode: Mode; role?:
     setStatus("loading");
 
     const result = isSignup
-      ? await registerUser({ name, email, password, role })
+      ? role === "annotator"
+        ? await registerAnnotator({ name, email, password })
+        : await registerUser({ name, email, password })
       : await authenticateUser({ email, password });
 
     if (!result.ok) {
@@ -86,10 +81,7 @@ export default function AuthForm({ mode, role = "client" }: { mode: Mode; role?:
       return;
     }
 
-    // Sign-up always persists (a brand-new account should stay signed in);
-    // sign-in respects the "remember me" checkbox.
-    setSession(result.user, isSignup ? true : remember);
-    refreshAuth();
+    await refreshAuth();
 
     const redirectTarget = searchParams.get("redirect");
     const roleHome = ROLE_HOME[result.user.role] ?? "/client-portal";
@@ -244,49 +236,8 @@ export default function AuthForm({ mode, role = "client" }: { mode: Mode; role?:
         </div>
       )}
 
-      {isAnnotatorSignup && (
-        <div>
-          <label htmlFor="accessCode" className="hs-label">
-            ACCESS CODE
-          </label>
-          <input
-            id="accessCode"
-            name="accessCode"
-            type="text"
-            autoComplete="off"
-            className="hs-input"
-            placeholder="Provided by your team lead"
-            value={accessCode}
-            onChange={(e) => setAccessCode(e.target.value)}
-            aria-invalid={!!errors.accessCode}
-            aria-describedby={errors.accessCode ? "accessCode-error" : undefined}
-          />
-          <span id="accessCode-error">{fieldError("accessCode")}</span>
-        </div>
-      )}
-
       {!isSignup && (
-        <div className="flex items-center justify-between">
-          <label className="flex cursor-pointer items-center gap-2.5 select-none">
-            <input
-              type="checkbox"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-              className="peer sr-only"
-            />
-            <span
-              className={`flex h-4 w-4 items-center justify-center rounded-[3px] border text-[9px] transition-all duration-300 ${
-                remember
-                  ? "border-orange bg-orange text-background"
-                  : "border-border-strong bg-transparent text-transparent"
-              }`}
-            >
-              ✓
-            </span>
-            <span className="font-mono-tech text-[0.62rem] tracking-[0.14em] text-text-muted">
-              REMEMBER ME
-            </span>
-          </label>
+        <div className="flex justify-end">
           <button
             type="button"
             className="font-mono-tech text-[0.62rem] tracking-[0.14em] text-text-faint transition-colors hover:text-orange-bright"
