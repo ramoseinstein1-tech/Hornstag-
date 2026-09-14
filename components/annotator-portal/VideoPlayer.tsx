@@ -16,9 +16,15 @@ function formatTime(seconds: number): string {
 
 const VideoPlayer = forwardRef<VideoPlayerHandle, {
   src: string;
+  /** Seeks here once THIS src's metadata finishes loading — for callers
+   * that change `src` and want to land on a specific position as soon as
+   * it's ready, without racing the video element's own async load. An
+   * imperative seekTo() call made right after changing `src` would often
+   * target the outgoing element before the new source has attached. */
+  seekOnLoadSeconds?: number;
   onTimeUpdate?: (seconds: number) => void;
   onDurationChange?: (seconds: number) => void;
-}>(function VideoPlayer({ src, onTimeUpdate, onDurationChange }, ref) {
+}>(function VideoPlayer({ src, seekOnLoadSeconds, onTimeUpdate, onDurationChange }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -46,6 +52,10 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, {
     const handleMeta = () => {
       setDuration(video.duration);
       onDurationChange?.(video.duration);
+      if (seekOnLoadSeconds != null) {
+        video.currentTime = seekOnLoadSeconds;
+        setCurrentTime(seekOnLoadSeconds);
+      }
     };
     video.addEventListener("timeupdate", handleTime);
     video.addEventListener("loadedmetadata", handleMeta);
@@ -55,6 +65,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, {
       video.removeEventListener("timeupdate", handleTime);
       video.removeEventListener("loadedmetadata", handleMeta);
     };
+    // Intentionally keyed only on `src` — seekOnLoadSeconds should apply
+    // once per source load, not re-fire just because the target value
+    // was updated for some other reason while the same src is loaded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);
 

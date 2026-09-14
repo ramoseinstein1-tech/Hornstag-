@@ -13,6 +13,7 @@ import {
 import type { Project, PlayerBoxScore, ProjectResults, TaggedClip, ProjectStatus } from "@/lib/portal/store";
 import { officialOutcome } from "@/lib/portal/store";
 import { computeRealResults, hasRealAnnotationData } from "@/lib/portal/results";
+import { getSegments, getSegmentClipUrl, type VideoSegment } from "@/lib/portal/segments";
 
 function StatTile({ label, value }: { label: string; value: string | number }) {
   return (
@@ -124,6 +125,47 @@ function ClipCard({ clip }: { clip: TaggedClip }) {
   );
 }
 
+function PeriodClipCard({ segment }: { segment: VideoSegment }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleOpen() {
+    if (url) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    if (!segment.clipPath) return;
+    setLoading(true);
+    const signed = await getSegmentClipUrl(segment.clipPath);
+    setLoading(false);
+    if (signed) {
+      setUrl(signed);
+      window.open(signed, "_blank", "noopener");
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleOpen}
+      disabled={loading}
+      className="hs-panel sheen-top hs-panel-hover flex items-center justify-between gap-4 p-5 text-left disabled:cursor-wait disabled:opacity-70"
+    >
+      <div>
+        <p className="font-display text-sm font-semibold uppercase tracking-tight text-orange-bright">
+          {segment.label}
+        </p>
+        <p className="mt-1 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-muted">
+          {Math.round(segment.endSeconds - segment.startSeconds)}s clip
+        </p>
+      </div>
+      <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full border border-orange/40 bg-orange/10 text-orange-bright">
+        {loading ? "…" : "▶"}
+      </span>
+    </button>
+  );
+}
+
 const PENDING_COPY: Record<Exclude<ProjectStatus, "Completed">, { chip: string; message: (name: string) => string }> = {
   Processing: {
     chip: "PROCESSING",
@@ -144,6 +186,7 @@ export default function ResultsPage() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<ProjectResults | null>(null);
+  const [periodClips, setPeriodClips] = useState<VideoSegment[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -158,6 +201,7 @@ export default function ResultsPage() {
   useEffect(() => {
     if (!selected || selected.status !== "Completed") {
       setResults(null);
+      setPeriodClips([]);
       return;
     }
     let cancelled = false;
@@ -168,6 +212,9 @@ export default function ResultsPage() {
       } else {
         setResults(getProjectResults(selected));
       }
+    });
+    getSegments(selected.id).then((segs) => {
+      if (!cancelled) setPeriodClips((segs ?? []).filter((s) => s.clipPath));
     });
     return () => {
       cancelled = true;
@@ -343,6 +390,19 @@ export default function ResultsPage() {
               <BoxScoreTable title={selected.opponent ?? "OPPONENT"} players={results.opponent} />
             )}
           </div>
+
+          {periodClips.length > 0 && (
+            <div className="mt-10">
+              <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+                PERIOD CLIPS
+              </h2>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {periodClips.map((seg) => (
+                  <PeriodClipCard key={seg.label} segment={seg} />
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="mt-10">
             <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">

@@ -164,7 +164,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
   return mapProjectRow(data as unknown as ProjectRow);
 }
 
-const VIDEO_BUCKET = "project-videos";
+export const VIDEO_BUCKET = "project-videos";
 /** The shared placeholder every workspace played before Phase 2 — still
  * the fallback for any project with no real video attached (pre-Phase-2
  * demo projects, or one whose upload never completed). */

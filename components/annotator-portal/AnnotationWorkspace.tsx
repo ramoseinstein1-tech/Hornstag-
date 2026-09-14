@@ -12,7 +12,8 @@ import {
   type AnnotationEvent,
   type NewEventInput,
 } from "@/lib/portal/events";
-import { getSegments, saveSegments, periodForTimestamp, type VideoSegment } from "@/lib/portal/segments";
+import { getSegments, saveSegments, getSegmentClipUrl, periodForTimestamp, type VideoSegment } from "@/lib/portal/segments";
+import { cutProjectIntoClips, type ClipProgress } from "@/lib/portal/videoClips";
 import VideoPlayer, { type VideoPlayerHandle } from "./VideoPlayer";
 import EventsTimeline from "./EventsTimeline";
 import CreateEventForm from "./CreateEventForm";
@@ -44,10 +45,34 @@ export default function AnnotationWorkspace({
   const [segments, setSegments] = useState<VideoSegment[] | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  // Pinned to the FULL source video's duration — used by EventsTimeline
+  // and SegmentVideo, both of which reason about the whole game
+  // regardless of whether a shorter per-period clip happens to be
+  // loaded for active tagging right now (see fullDuration handling in
+  // handlePlayerDurationChange below).
+  const [fullDuration, setFullDuration] = useState(0);
   const [editingEvent, setEditingEvent] = useState<AnnotationEvent | null>(null);
   const [tab, setTab] = useState<Tab>("segments");
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
+
+  // Phase 3: while tagging, the ANNOTATE tab prefers playing a period's
+  // own short clip (once cut) over scrubbing the full source video.
+  // `activeClip` is null when showing the full video. `currentTime` and
+  // `handleSeek` always deal in FULL-VIDEO-ABSOLUTE seconds regardless
+  // of which is actually loaded — annotation_events.timestamp_seconds
+  // has always meant "seconds into the full game," and that can't change
+  // just because a shorter clip happens to be playing right now.
+  const [activeClip, setActiveClip] = useState<{ label: string; offset: number; duration: number } | null>(null);
+  const [playerSrc, setPlayerSrc] = useState<string | null>(null);
+  const [playerSeekTarget, setPlayerSeekTarget] = useState<number | undefined>(undefined);
+  const [cuttingProgress, setCuttingProgress] = useState<ClipProgress | null>(null);
+  const clipUrlCacheRef = useRef<Map<string, string>>(new Map());
+
+  // The SEGMENTS tab always needs the full video (marking period
+  // boundaries requires scrubbing the whole thing) — only the ANNOTATE
+  // tab ever loads a clip.
+  const effectiveActiveClip = tab === "annotate" ? activeClip : null;
+  const effectiveSrc = tab === "segments" ? videoUrl : (playerSrc ?? videoUrl);
 
   useEffect(() => {
     getEvents(project.id).then(setEvents);
@@ -55,7 +80,10 @@ export default function AnnotationWorkspace({
       setSegments(s);
       setTab(s ? "annotate" : "segments");
     });
-    getProjectVideoUrl(project).then(setVideoUrl);
+    getProjectVideoUrl(project).then((url) => {
+      setVideoUrl(url);
+      setPlayerSrc(url);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
@@ -79,22 +107,92 @@ export default function AnnotationWorkspace({
     [events]
   );
 
-  function handleSeek(seconds: number) {
-    videoRef.current?.seekTo(seconds);
-    setCurrentTime(seconds);
+  function handlePlayerTimeUpdate(raw: number) {
+    setCurrentTime(effectiveActiveClip ? effectiveActiveClip.offset + raw : raw);
+  }
+
+  function handlePlayerDurationChange(raw: number) {
+    // A clip's own (short) duration must never overwrite the
+    // full-game duration EventsTimeline/SegmentVideo rely on.
+    if (effectiveActiveClip) return;
+    setFullDuration(raw);
+  }
+
+  /** Absolute (full-video-relative) seek — from EventsTimeline,
+   * EventsList, or "USE CURRENT". Stays on the active clip when the
+   * target falls inside it; otherwise falls back to the full source
+   * video, since a clip only covers its own period. */
+  function handleSeek(absoluteSeconds: number) {
+    if (activeClip) {
+      const relative = absoluteSeconds - activeClip.offset;
+      if (relative >= 0 && relative < activeClip.duration) {
+        videoRef.current?.seekTo(relative);
+        setCurrentTime(absoluteSeconds);
+        return;
+      }
+      setActiveClip(null);
+      setPlayerSrc(videoUrl);
+      setPlayerSeekTarget(absoluteSeconds);
+      setCurrentTime(absoluteSeconds);
+      return;
+    }
+    videoRef.current?.seekTo(absoluteSeconds);
+    setCurrentTime(absoluteSeconds);
   }
 
   async function handleSaveSegments(newSegments: VideoSegment[]) {
     await saveSegments(currentProject.id, newSegments);
     setSegments(newSegments);
     setActiveSegmentIndex(0);
+    setActiveClip(null);
+    setPlayerSrc(videoUrl);
     setTab("annotate");
+
+    if (currentProject.videoPath) {
+      cutProjectIntoClips(currentProject, newSegments, (progress) => {
+        setCuttingProgress(progress.index < progress.total ? progress : null);
+      }).then(async () => {
+        setSegments(await getSegments(currentProject.id));
+      });
+    }
   }
 
-  function handleSelectSegment(index: number) {
+  async function handleSelectSegment(index: number) {
     if (!segments) return;
     setActiveSegmentIndex(index);
-    handleSeek(segments[index].startSeconds);
+    const seg = segments[index];
+
+    let clipUrl: string | null = null;
+    if (seg.clipPath) {
+      clipUrl = clipUrlCacheRef.current.get(seg.clipPath) ?? null;
+      if (!clipUrl) {
+        clipUrl = await getSegmentClipUrl(seg.clipPath);
+        if (clipUrl) clipUrlCacheRef.current.set(seg.clipPath, clipUrl);
+      }
+    }
+
+    if (clipUrl) {
+      if (playerSrc === clipUrl) {
+        videoRef.current?.seekTo(0);
+      } else {
+        setActiveClip({ label: seg.label, offset: seg.startSeconds, duration: seg.endSeconds - seg.startSeconds });
+        setPlayerSrc(clipUrl);
+        setPlayerSeekTarget(0);
+      }
+      setCurrentTime(seg.startSeconds);
+      return;
+    }
+
+    // No clip yet (still cutting, or it failed) — fall back to seeking
+    // within the full video, same as before Phase 3.
+    if (playerSrc === videoUrl) {
+      videoRef.current?.seekTo(seg.startSeconds);
+    } else {
+      setActiveClip(null);
+      setPlayerSrc(videoUrl);
+      setPlayerSeekTarget(seg.startSeconds);
+    }
+    setCurrentTime(seg.startSeconds);
   }
 
   async function handleSave(input: NewEventInput): Promise<{ ok: boolean; error?: string }> {
@@ -163,6 +261,13 @@ export default function AnnotationWorkspace({
         </p>
       )}
 
+      {cuttingProgress && (
+        <p className="mt-3 flex items-center gap-2 font-mono-tech text-[0.6rem] tracking-[0.1em] text-orange-bright">
+          <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-orange/30 border-t-orange" />
+          CUTTING INTO PERIOD CLIPS — {cuttingProgress.label.toUpperCase()} ({cuttingProgress.index + 1}/{cuttingProgress.total})
+        </p>
+      )}
+
       <div className="mt-8 flex gap-1.5 border-b border-border">
         {tabs.map((t) => {
           const locked = t.key === "annotate" && !segments;
@@ -198,26 +303,33 @@ export default function AnnotationWorkspace({
       {(tab === "segments" || tab === "annotate") && (
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
           <div className="flex flex-col gap-4">
-            {videoUrl ? (
+            {effectiveSrc ? (
               <VideoPlayer
                 ref={videoRef}
-                src={videoUrl}
-                onTimeUpdate={setCurrentTime}
-                onDurationChange={setDuration}
+                src={effectiveSrc}
+                seekOnLoadSeconds={playerSeekTarget}
+                onTimeUpdate={handlePlayerTimeUpdate}
+                onDurationChange={handlePlayerDurationChange}
               />
             ) : (
               <div className="hs-panel flex aspect-video items-center justify-center text-sm text-text-faint">
                 Loading video…
               </div>
             )}
-            <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} segments={segments} />
+            {effectiveActiveClip && (
+              <p className="font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint">
+                PLAYING {effectiveActiveClip.label.toUpperCase()} CLIP — click any tagged event or a different
+                period to jump elsewhere in the full game.
+              </p>
+            )}
+            <EventsTimeline durationSeconds={fullDuration} events={events} onSeek={handleSeek} segments={segments} />
           </div>
 
           <div className="flex flex-col gap-6">
             {tab === "segments" && (
               <SegmentVideo
                 format={currentProject.format}
-                duration={duration}
+                duration={fullDuration}
                 currentTimeSeconds={currentTime}
                 existing={segments}
                 onSave={handleSaveSegments}
