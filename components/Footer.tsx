@@ -113,7 +113,19 @@ export default function Footer() {
           </div>
         </div>
 
-        <div className="mt-16 flex flex-col gap-5 border-t border-border pt-7 text-xs text-text-faint md:flex-row md:items-center md:justify-between">
+        <div className="mt-14 flex flex-wrap items-center gap-4 border-t border-border pt-10">
+          <span className="font-mono-tech text-[0.62rem] tracking-[0.2em] text-text-faint">
+            TEAM PORTALS
+          </span>
+          <Link href="/signin" className="hs-btn-secondary">
+            CLIENT LOGIN
+          </Link>
+          <Link href="/annotator-signin" className="hs-btn-secondary">
+            ANNOTATOR LOGIN
+          </Link>
+        </div>
+
+        <div className="mt-8 flex flex-col gap-5 border-t border-border pt-7 text-xs text-text-faint md:flex-row md:items-center md:justify-between">
           <span>© {new Date().getFullYear()} Hornstag, Inc. All rights reserved.</span>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
