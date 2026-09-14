@@ -10,7 +10,9 @@ import {
   toCsv,
   downloadCsv,
 } from "@/lib/portal/store";
-import type { PlayerBoxScore, TaggedClip } from "@/lib/portal/store";
+import type { PlayerBoxScore, TaggedClip, ProjectStatus } from "@/lib/portal/store";
+import { officialOutcome } from "@/lib/portal/store";
+import { computeRealResults, hasRealAnnotationData } from "@/lib/portal/results";
 
 function StatTile({ label, value }: { label: string; value: string | number }) {
   return (
@@ -101,9 +103,15 @@ function ClipCard({ clip }: { clip: TaggedClip }) {
         <p className="mt-1 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-muted">
           {clip.player}
         </p>
-        <p className="mt-1 font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint">
-          {clip.confidence}% CONFIDENCE
-        </p>
+        {clip.verified ? (
+          <p className="mt-1 font-mono-tech text-[0.58rem] tracking-[0.1em] text-[#7cd48a]">
+            ✓ ANNOTATOR VERIFIED
+          </p>
+        ) : (
+          <p className="mt-1 font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint">
+            {clip.confidence}% CONFIDENCE
+          </p>
+        )}
         {open && (
           <p className="mt-2 border-t border-border pt-2 text-[0.68rem] leading-relaxed text-text-faint">
             Clip playback isn&rsquo;t available in this demo — in production
@@ -116,16 +124,31 @@ function ClipCard({ clip }: { clip: TaggedClip }) {
   );
 }
 
+const PENDING_COPY: Record<Exclude<ProjectStatus, "Completed">, { chip: string; message: (name: string) => string }> = {
+  Processing: {
+    chip: "PROCESSING",
+    message: (name) => `Annotation hasn't started on "${name}" yet. Check back once processing begins.`,
+  },
+  "In Progress": {
+    chip: "IN PROGRESS",
+    message: (name) => `An annotator is actively tagging "${name}". Results appear here once QA approves the submission.`,
+  },
+  "Needs Review": {
+    chip: "IN QA REVIEW",
+    message: (name) => `"${name}" has been submitted and is awaiting admin QA review before results are released.`,
+  },
+};
+
 export default function ResultsPage() {
   const { user } = useAuth();
   const allProjects = useMemo(() => (user ? getProjects(user.id) : []), [user]);
   const [selectedId, setSelectedId] = useState<string | null>(allProjects[0]?.id ?? null);
 
   const selected = allProjects.find((p) => p.id === selectedId) ?? allProjects[0] ?? null;
-  const results = useMemo(
-    () => (selected && selected.status !== "Processing" ? getProjectResults(selected) : null),
-    [selected]
-  );
+  const results = useMemo(() => {
+    if (!selected || selected.status !== "Completed") return null;
+    return hasRealAnnotationData(selected.id) ? computeRealResults(selected) : getProjectResults(selected);
+  }, [selected]);
   const yourTotals = useMemo(() => (results ? teamTotals(results.team) : null), [results]);
   const oppTotals = useMemo(
     () => (results?.opponent ? teamTotals(results.opponent) : null),
@@ -220,21 +243,36 @@ export default function ResultsPage() {
         </select>
       </div>
 
-      {selected && selected.status === "Processing" && (
+      {selected && selected.status !== "Completed" && (
         <div
           className="hs-panel mt-8 flex flex-col items-center justify-center gap-3 p-14 text-center"
           style={{ borderStyle: "dashed" }}
         >
-          <span className="hs-chip">PROCESSING</span>
-          <p className="max-w-sm text-sm text-text-faint">
-            Annotation hasn&rsquo;t started on &ldquo;{selected.name}&rdquo;
-            yet. Check back once processing begins.
-          </p>
+          <span className="hs-chip">{PENDING_COPY[selected.status].chip}</span>
+          <p className="max-w-sm text-sm text-text-faint">{PENDING_COPY[selected.status].message(selected.name)}</p>
         </div>
       )}
 
       {selected && results && yourTotals && (
         <>
+          {selected.officialScore && (
+            <div className="hs-panel sheen-top mt-8 flex flex-wrap items-center justify-between gap-4 p-5">
+              <div>
+                <p className="font-mono-tech text-[0.6rem] tracking-[0.16em] text-text-faint">FINAL SCORE</p>
+                <p className="mt-1 font-display text-2xl font-semibold text-text">
+                  {selected.officialScore.team}–{selected.officialScore.opponent}
+                </p>
+              </div>
+              <span className="hs-chip !border-orange/50 !text-orange-bright">
+                {officialOutcome(selected.officialScore) === "tie"
+                  ? "TIE"
+                  : officialOutcome(selected.officialScore) === "team"
+                    ? "WIN"
+                    : "LOSS"}
+              </span>
+            </div>
+          )}
+
           <div className="mt-10">
             <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
               TEAM STATS

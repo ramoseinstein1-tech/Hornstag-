@@ -16,21 +16,47 @@ function readSession(request: NextRequest): SessionUser | null {
   return null;
 }
 
+const AUTH_ROUTES = [
+  "/signin",
+  "/signup",
+  "/annotator-signin",
+  "/annotator-signup",
+  "/admin-signin",
+];
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = readSession(request);
 
-  const isPortalRoute = pathname.startsWith("/client-portal");
-  const isAuthRoute = pathname === "/signin" || pathname === "/signup";
+  const isClientPortalRoute = pathname.startsWith("/client-portal");
+  const isAnnotatorPortalRoute = pathname.startsWith("/annotator-portal");
+  const isAdminPortalRoute = pathname.startsWith("/admin-portal");
+  const isAuthRoute = AUTH_ROUTES.includes(pathname);
 
   // Unauthenticated users can't reach the client portal.
-  if (isPortalRoute && !session) {
+  if (isClientPortalRoute && !session) {
     const signInUrl = new URL("/signin", request.url);
     signInUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(signInUrl);
   }
 
-  // Already-signed-in users don't need the sign-in/sign-up forms.
+  // Unauthenticated users can't reach the annotator portal either — sent to
+  // its own sign-in, not the client one.
+  if (isAnnotatorPortalRoute && !session) {
+    const signInUrl = new URL("/annotator-signin", request.url);
+    signInUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(signInUrl);
+  }
+
+  // Same for the admin portal. Note /admin-bootstrap is deliberately NOT
+  // gated here — it must work before any session exists.
+  if (isAdminPortalRoute && !session) {
+    const signInUrl = new URL("/admin-signin", request.url);
+    signInUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(signInUrl);
+  }
+
+  // Already-signed-in users don't need any sign-in/sign-up form.
   if (isAuthRoute && session) {
     const home = ROLE_HOME[session.role] ?? "/client-portal";
     return NextResponse.redirect(new URL(home, request.url));
@@ -40,5 +66,14 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/client-portal/:path*", "/signin", "/signup"],
+  matcher: [
+    "/client-portal/:path*",
+    "/signin",
+    "/signup",
+    "/annotator-portal/:path*",
+    "/annotator-signin",
+    "/annotator-signup",
+    "/admin-portal/:path*",
+    "/admin-signin",
+  ],
 };

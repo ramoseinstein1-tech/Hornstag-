@@ -469,6 +469,23 @@ input:focus-visible,
   border-color: rgba(255, 92, 92, 0.6);
 }
 
+/* Native <select> — browsers otherwise ignore the dark theme for the
+   closed control (and, in Chromium/Firefox, respect option background
+   only when it's set explicitly). */
+select.hs-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23A69C8C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
+  color-scheme: dark;
+}
+select.hs-input option {
+  background-color: var(--surface);
+  color: var(--text);
+}
+
 /* Legal / long-form prose */
 .prose-legal {
   color: var(--text-muted);

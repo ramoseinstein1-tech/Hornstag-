@@ -4,12 +4,14 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { createProject, formatFileSize } from "@/lib/portal/store";
+import { createProject, formatFileSize, officialOutcome } from "@/lib/portal/store";
 import type { AnnotationScope, GameFormat, RosterPlayer } from "@/lib/portal/store";
 
-type Errors = Partial<Record<"name" | "file" | "roster" | "opponentRoster", string>>;
+type Errors = Partial<
+  Record<"name" | "file" | "roster" | "opponentRoster" | "teamScore" | "opponentScore", string>
+>;
 
-const emptyPlayer = (): RosterPlayer => ({ number: "", name: "" });
+const emptyPlayer = (): RosterPlayer => ({ id: crypto.randomUUID(), number: "", name: "" });
 
 function RosterEditor({
   label,
@@ -108,6 +110,8 @@ export default function UploadProjectPage() {
   const [format, setFormat] = useState<GameFormat>("Quarters");
   const [roster, setRoster] = useState<RosterPlayer[]>([emptyPlayer()]);
   const [opponentRoster, setOpponentRoster] = useState<RosterPlayer[]>([emptyPlayer()]);
+  const [teamScoreInput, setTeamScoreInput] = useState("");
+  const [opponentScoreInput, setOpponentScoreInput] = useState("");
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -134,6 +138,14 @@ export default function UploadProjectPage() {
         next.opponentRoster = "Add at least one opponent roster player.";
       }
     }
+
+    if (teamScoreInput.trim() === "" || !/^\d+$/.test(teamScoreInput.trim())) {
+      next.teamScore = "Enter your team's final score.";
+    }
+    if (opponentScoreInput.trim() === "" || !/^\d+$/.test(opponentScoreInput.trim())) {
+      next.opponentScore = "Enter the opponent's final score.";
+    }
+
     return next;
   }
 
@@ -161,7 +173,8 @@ export default function UploadProjectPage() {
       notes: notes.trim() || undefined,
       fileName: file!.name,
       fileSize: formatFileSize(file!.size),
-    });
+      officialScore: { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) },
+    }, user.name);
 
     setTimeout(() => setStatus("done"), 700);
   }
@@ -205,6 +218,8 @@ export default function UploadProjectPage() {
                 setFile(null);
                 setRoster([emptyPlayer()]);
                 setOpponentRoster([emptyPlayer()]);
+                setTeamScoreInput("");
+                setOpponentScoreInput("");
               }}
               className="hs-btn-secondary flex-1"
             >
@@ -315,6 +330,60 @@ export default function UploadProjectPage() {
               ))}
             </div>
           </div>
+        </div>
+
+        <div>
+          <span className="hs-label">OFFICIAL FINAL SCORE</span>
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <div className="w-full">
+                <input
+                  className="hs-input"
+                  placeholder="Your team's score"
+                  inputMode="numeric"
+                  value={teamScoreInput}
+                  onChange={(e) => setTeamScoreInput(e.target.value.replace(/[^\d]/g, ""))}
+                  aria-invalid={!!errors.teamScore}
+                  aria-label="Your team's final score"
+                />
+              </div>
+              {errors.teamScore && (
+                <p className="mt-2 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">
+                  {errors.teamScore}
+                </p>
+              )}
+            </div>
+            <div>
+              <div className="w-full">
+                <input
+                  className="hs-input"
+                  placeholder="Opponent's score"
+                  inputMode="numeric"
+                  value={opponentScoreInput}
+                  onChange={(e) => setOpponentScoreInput(e.target.value.replace(/[^\d]/g, ""))}
+                  aria-invalid={!!errors.opponentScore}
+                  aria-label="Opponent's final score"
+                />
+              </div>
+              {errors.opponentScore && (
+                <p className="mt-2 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">
+                  {errors.opponentScore}
+                </p>
+              )}
+            </div>
+          </div>
+          {teamScoreInput !== "" && opponentScoreInput !== "" && (
+            <p className="mt-3 font-mono-tech text-[0.62rem] tracking-[0.1em] text-orange-bright">
+              {(() => {
+                const outcome = officialOutcome({ team: Number(teamScoreInput), opponent: Number(opponentScoreInput) });
+                if (outcome === "tie") return "RESULT: TIE";
+                return outcome === "team" ? "RESULT: YOUR TEAM WINS" : "RESULT: OPPONENT WINS";
+              })()}
+            </p>
+          )}
+          <p className="mt-2 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
+            THIS IS THE GROUND TRUTH — QA CHECKS THE ANNOTATED SCORE AGAINST IT BEFORE COMPLETION
+          </p>
         </div>
 
         <RosterEditor

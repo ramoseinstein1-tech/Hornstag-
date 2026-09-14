@@ -9,13 +9,26 @@
  * (S3/R2/etc.) before this handles real uploads.
  */
 
+import { publishProjectToGlobalIndex } from "./globalProjects";
+
 export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed";
 export type AnnotationScope = "Single Team" | "Both Teams";
 export type GameFormat = "Quarters" | "Halves";
 
 export type RosterPlayer = {
+  id: string;
   number: string;
   name: string;
+};
+
+/** The final score the client reports at upload time — the ground truth
+ * the annotator's tagged events are checked against during QA. Optional
+ * on the type only because pre-existing (seed/legacy) records predate
+ * this field; every NEW project requires it (enforced by the upload
+ * form, not this type). */
+export type OfficialScore = {
+  team: number;
+  opponent: number;
 };
 
 export type Project = {
@@ -32,9 +45,17 @@ export type Project = {
   fileSize?: string;
   status: ProjectStatus;
   progress: number;
+  officialScore?: OfficialScore;
   createdAt: string;
   updatedAt: string;
 };
+
+/** "team" | "opponent" if one side outscored the other, else "tie". */
+export function officialOutcome(score: OfficialScore): "team" | "opponent" | "tie" {
+  if (score.team > score.opponent) return "team";
+  if (score.opponent > score.team) return "opponent";
+  return "tie";
+}
 
 export type ActivityEntry = {
   id: string;
@@ -48,10 +69,14 @@ type PortalData = {
 };
 
 // Bumped to v2 when the Project shape changed (level/priority ->
-// scope/format/roster). Bump again any time Project's shape changes in a
-// way older stored records won't satisfy — old keys are simply orphaned
-// and harmless, and everyone gets fresh, correctly-shaped seed data.
-const KEY_PREFIX = "hornstag_portal_v2_";
+// scope/format/roster), then to v3 when RosterPlayer gained a stable `id`
+// (needed so annotation events can reference a specific player instead of
+// reconstructing identity from "${number}-${name}" strings). Unlike the
+// v1->v2 bump, v2->v3 is migrated in place (see migrateV2ToV3) rather than
+// just reseeded, since real client-uploaded rosters shouldn't be wiped by
+// a purely additive field.
+const KEY_PREFIX = "hornstag_portal_v3_";
+const KEY_PREFIX_V2 = "hornstag_portal_v2_";
 
 function isBrowser() {
   return typeof window !== "undefined";
@@ -59,6 +84,10 @@ function isBrowser() {
 
 function key(userId: string) {
   return `${KEY_PREFIX}${userId}`;
+}
+
+function keyV2(userId: string) {
+  return `${KEY_PREFIX_V2}${userId}`;
 }
 
 function seedData(): PortalData {
@@ -74,16 +103,17 @@ function seedData(): PortalData {
         scope: "Both Teams",
         format: "Quarters",
         roster: [
-          { number: "23", name: "J. Carter" },
-          { number: "11", name: "D. Nguyen" },
-          { number: "04", name: "M. Osei" },
+          { id: "seed-1-p1", number: "23", name: "J. Carter" },
+          { id: "seed-1-p2", number: "11", name: "D. Nguyen" },
+          { id: "seed-1-p3", number: "04", name: "M. Osei" },
         ],
         opponentRoster: [
-          { number: "7", name: "T. Brooks" },
-          { number: "15", name: "R. Silva" },
+          { id: "seed-1-o1", number: "7", name: "T. Brooks" },
+          { id: "seed-1-o2", number: "15", name: "R. Silva" },
         ],
         status: "In Progress",
         progress: 62,
+        officialScore: { team: 78, opponent: 71 },
         createdAt: hoursAgo(30),
         updatedAt: hoursAgo(2),
       },
@@ -93,11 +123,12 @@ function seedData(): PortalData {
         scope: "Single Team",
         format: "Halves",
         roster: [
-          { number: "32", name: "A. Patel" },
-          { number: "09", name: "K. Reyes" },
+          { id: "seed-2-p1", number: "32", name: "A. Patel" },
+          { id: "seed-2-p2", number: "09", name: "K. Reyes" },
         ],
         status: "Needs Review",
         progress: 100,
+        officialScore: { team: 64, opponent: 59 },
         createdAt: hoursAgo(48),
         updatedAt: hoursAgo(24),
       },
@@ -106,9 +137,10 @@ function seedData(): PortalData {
         name: "Scouting Reel — G. Martinez",
         scope: "Single Team",
         format: "Quarters",
-        roster: [{ number: "05", name: "G. Martinez" }],
+        roster: [{ id: "seed-3-p1", number: "05", name: "G. Martinez" }],
         status: "Completed",
         progress: 100,
+        officialScore: { team: 82, opponent: 75 },
         createdAt: hoursAgo(96),
         updatedAt: hoursAgo(72),
       },
@@ -126,15 +158,54 @@ function isValidShape(data: unknown): data is PortalData {
   if (!data || typeof data !== "object") return false;
   const { projects } = data as PortalData;
   if (!Array.isArray(projects)) return false;
-  // Spot-check the first record against the current Project shape so a
-  // schema change we forgot to version-bump self-heals instead of
-  // crashing the page on a missing field.
+  // Spot-check every record against the current Project shape (including
+  // the v3 roster `id` field) so a schema change we forgot to version-bump
+  // self-heals instead of crashing the page on a missing field.
   return projects.every(
     (p) =>
       typeof p.scope === "string" &&
       typeof p.format === "string" &&
-      Array.isArray(p.roster)
+      Array.isArray(p.roster) &&
+      p.roster.every((r) => typeof r.id === "string") &&
+      (p.opponentRoster === undefined ||
+        (Array.isArray(p.opponentRoster) && p.opponentRoster.every((r) => typeof r.id === "string")))
   );
+}
+
+/** Migrates a pre-v3 record forward by synthesizing an id for any roster
+ * player that doesn't already have one, rather than discarding the data —
+ * unlike the v1->v2 bump, this field is purely additive so there's no
+ * reason to reseed a client's real uploaded projects. Returns null if
+ * there's no v2 data to migrate. */
+function migrateV2ToV3(userId: string): PortalData | null {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.localStorage.getItem(keyV2(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.projects)) return null;
+
+    const withIds = (roster: unknown): RosterPlayer[] =>
+      Array.isArray(roster)
+        ? roster.map((r: Partial<RosterPlayer>) => ({
+            id: typeof r.id === "string" ? r.id : crypto.randomUUID(),
+            number: r.number ?? "",
+            name: r.name ?? "",
+          }))
+        : [];
+
+    const migrated: PortalData = {
+      projects: parsed.projects.map((p: Project & { roster: unknown; opponentRoster?: unknown }) => ({
+        ...p,
+        roster: withIds(p.roster),
+        opponentRoster: p.opponentRoster ? withIds(p.opponentRoster) : p.opponentRoster,
+      })),
+      activity: Array.isArray(parsed.activity) ? parsed.activity : [],
+    };
+    return migrated;
+  } catch {
+    return null;
+  }
 }
 
 function readData(userId: string): PortalData {
@@ -146,8 +217,16 @@ function readData(userId: string): PortalData {
       if (isValidShape(parsed)) return parsed;
     }
   } catch {
-    // Corrupt data — fall through and reseed.
+    // Corrupt data — fall through and try migrating, then reseed.
   }
+
+  const migrated = migrateV2ToV3(userId);
+  if (migrated && isValidShape(migrated)) {
+    writeData(userId, migrated);
+    window.localStorage.removeItem(keyV2(userId));
+    return migrated;
+  }
+
   const seeded = seedData();
   writeData(userId, seeded);
   return seeded;
@@ -166,9 +245,77 @@ export function getActivity(userId: string): ActivityEntry[] {
   return readData(userId).activity;
 }
 
+/** Adds an entry to a client's activity feed from OUTSIDE their own
+ * session — used by lib/portal/pipeline.ts so a client actually sees a
+ * concrete, visible signal on their dashboard when QA completes a
+ * project, rather than having to guess results are ready by refreshing
+ * the Results page. Same same-browser-localStorage caveat as the rest of
+ * this file's cross-role writes (see updateRoster/setProjectStatus). */
+export function addActivity(userId: string, text: string): void {
+  const data = readData(userId);
+  data.activity = [{ id: crypto.randomUUID(), text, time: new Date().toISOString() }, ...data.activity];
+  writeData(userId, data);
+}
+
 export function deleteUserData(userId: string) {
   if (!isBrowser()) return;
   window.localStorage.removeItem(key(userId));
+}
+
+/**
+ * Updates a project's roster from OUTSIDE the owning client's own session —
+ * used by the annotator workspace, since annotators need to fix/extend a
+ * roster while tagging (a jersey number typo, a player the client forgot).
+ * Writes directly into the owning client's localStorage bucket, which only
+ * works because this is all same-browser localStorage with no real access
+ * control (see the file-level comment above) — not a security boundary.
+ */
+export function updateRoster(
+  ownerId: string,
+  projectId: string,
+  roster: RosterPlayer[],
+  opponentRoster?: RosterPlayer[]
+): Project | null {
+  const data = readData(ownerId);
+  const idx = data.projects.findIndex((p) => p.id === projectId);
+  if (idx === -1) return null;
+
+  data.projects[idx] = {
+    ...data.projects[idx],
+    roster,
+    opponentRoster: data.projects[idx].scope === "Both Teams" ? opponentRoster : data.projects[idx].opponentRoster,
+    updatedAt: new Date().toISOString(),
+  };
+  writeData(ownerId, data);
+  return data.projects[idx];
+}
+
+/**
+ * Updates a project's client-facing status/progress from OUTSIDE the
+ * owning client's own session — called by lib/portal/pipeline.ts to keep
+ * this mirrored with the annotation-side GlobalAnnotationStatus, so the
+ * client's own Results page (which gates on `status`) actually reflects
+ * real pipeline progress instead of staying frozen at "Processing"
+ * forever (its only previous value, set once at createProject()).
+ */
+export function setProjectStatus(
+  ownerId: string,
+  projectId: string,
+  status: ProjectStatus,
+  progress?: number
+): Project | null {
+  const data = readData(ownerId);
+  const idx = data.projects.findIndex((p) => p.id === projectId);
+  if (idx === -1) return null;
+
+  data.projects[idx] = {
+    ...data.projects[idx],
+    status,
+    progress: progress ?? data.projects[idx].progress,
+    updatedAt: new Date().toISOString(),
+  };
+  writeData(ownerId, data);
+  return data.projects[idx];
 }
 
 export function createProject(
@@ -184,7 +331,9 @@ export function createProject(
     notes?: string;
     fileName?: string;
     fileSize?: string;
-  }
+    officialScore: OfficialScore;
+  },
+  ownerName?: string
 ): Project {
   const data = readData(userId);
   const now = new Date().toISOString();
@@ -201,6 +350,7 @@ export function createProject(
     notes: input.notes,
     fileName: input.fileName,
     fileSize: input.fileSize,
+    officialScore: input.officialScore,
     status: "Processing",
     progress: 4,
     createdAt: now,
@@ -216,6 +366,16 @@ export function createProject(
   data.projects = [project, ...data.projects];
   data.activity = [activityEntry, ...data.activity];
   writeData(userId, data);
+
+  // Publishes a lightweight pointer to this project so an Annotator (a
+  // different account, same browser) can find it to claim — see
+  // lib/portal/globalProjects.ts for the same-browser-only caveat.
+  publishProjectToGlobalIndex({
+    projectId: project.id,
+    ownerId: userId,
+    ownerName: ownerName ?? "Unknown",
+    createdAt: now,
+  });
 
   return project;
 }
@@ -268,6 +428,10 @@ export type TaggedClip = {
   time: string;
   player: string;
   confidence: number;
+  /** True only for a REAL, annotator-tagged clip (see lib/portal/results.ts)
+   * — lets ClipCard show "verified" instead of a meaningless fake
+   * confidence score. Always undefined for this file's own fake genClips(). */
+  verified?: boolean;
 };
 
 export type ProjectResults = {

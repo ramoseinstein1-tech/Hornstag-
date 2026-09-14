@@ -125,6 +125,7 @@ export async function registerUser(input: {
   name: string;
   email: string;
   password: string;
+  role?: UserRole;
 }): Promise<AuthResult> {
   const email = input.email.trim().toLowerCase();
   const users = getUsers();
@@ -136,13 +137,13 @@ export async function registerUser(input: {
   const salt = randomSalt();
   const passwordHash = await hashPassword(input.password, salt);
 
-  // New public sign-ups are always provisioned as "client" for now — see
-  // ROLE_HOME in ./types for how Annotator/Admin would plug in later.
+  // Defaults to "client" so the public /signup flow is unaffected — the
+  // annotator signup flow is the only caller that passes role explicitly.
   const user: StoredUser = {
     id: crypto.randomUUID(),
     name: input.name.trim(),
     email,
-    role: "client",
+    role: input.role ?? "client",
     salt,
     passwordHash,
     createdAt: new Date().toISOString(),
@@ -224,4 +225,39 @@ export async function changePassword(
  * clearSession() and the portal/billing deleteUserData() helpers. */
 export function deleteAccount(userId: string) {
   saveUsers(getUsers().filter((u) => u.id !== userId));
+}
+
+export type AdminUserSummary = {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  createdAt: string;
+};
+
+/** Admin-only directory of every registered account in this browser.
+ * Strips salt/passwordHash — never expose those beyond this module. */
+export function listAllUsers(): AdminUserSummary[] {
+  return getUsers().map((u) => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    createdAt: u.createdAt,
+  }));
+}
+
+/** Admin-only role change. Leaves salt/passwordHash/session untouched —
+ * callers who change the CURRENTLY signed-in user's own role (not typical,
+ * disabled in the admin UI) would still need to refresh() the session. */
+export function updateUserRole(
+  userId: string,
+  role: UserRole
+): { ok: true } | { ok: false; error: string } {
+  const users = getUsers();
+  const idx = users.findIndex((u) => u.id === userId);
+  if (idx === -1) return { ok: false, error: "Account not found." };
+  users[idx] = { ...users[idx], role };
+  saveUsers(users);
+  return { ok: true };
 }

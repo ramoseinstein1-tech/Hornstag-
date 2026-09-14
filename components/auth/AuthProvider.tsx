@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import type { SessionUser } from "@/lib/auth/types";
+import { ROLE_SIGNIN, type SessionUser } from "@/lib/auth/types";
 import { getSession, clearSession } from "@/lib/auth/mockAuthStore";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -44,11 +44,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const signOut = useCallback(() => {
+    const target = user ? (ROLE_SIGNIN[user.role] ?? "/signin") : "/signin";
     clearSession();
     setUser(null);
     setStatus("unauthenticated");
-    router.push("/signin");
-  }, [router]);
+    router.push(target);
+  }, [router, user]);
 
   return (
     <AuthContext.Provider value={{ user, status, refresh, signOut }}>

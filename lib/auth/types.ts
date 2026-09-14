@@ -15,13 +15,21 @@ export type SessionUser = {
   role: UserRole;
 };
 
-/** Where each role lands after signing in. Only "client" is built today —
- * the other two are reserved so Annotator/Admin dashboards can be dropped
+/** Where each role lands after signing in. Only "client" and "annotator"
+ * are built today — admin is reserved so an Admin dashboard can be dropped
  * in later without touching the redirect logic. */
 export const ROLE_HOME: Record<UserRole, string> = {
   client: "/client-portal",
-  annotator: "/annotator-portal", // not yet built
+  annotator: "/annotator-portal",
   admin: "/admin-portal", // not yet built
+};
+
+/** Where each role's sign-in form lives — a separate portal per role, not
+ * one shared /signin. Mirrors ROLE_HOME. */
+export const ROLE_SIGNIN: Record<UserRole, string> = {
+  client: "/signin",
+  annotator: "/annotator-signin",
+  admin: "/admin-signin", // not yet built
 };
 
 export const SESSION_COOKIE = "hornstag_session";

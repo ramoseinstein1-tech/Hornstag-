@@ -6,11 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "./AuthProvider";
 import { registerUser, authenticateUser, setSession } from "@/lib/auth/mockAuthStore";
-import { ROLE_HOME } from "@/lib/auth/types";
+import { ROLE_HOME, type UserRole } from "@/lib/auth/types";
+import { ANNOTATOR_ACCESS_CODE } from "@/lib/auth/annotatorAccessCode";
 
 type Mode = "signin" | "signup";
 
-type Errors = Partial<Record<"name" | "email" | "password" | "confirm", string>>;
+type Errors = Partial<Record<"name" | "email" | "password" | "confirm" | "accessCode", string>>;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -26,8 +27,9 @@ function passwordStrength(pw: string) {
 
 const STRENGTH_LABEL = ["TOO SHORT", "WEAK", "FAIR", "STRONG", "EXCELLENT"];
 
-export default function AuthForm({ mode }: { mode: Mode }) {
+export default function AuthForm({ mode, role = "client" }: { mode: Mode; role?: UserRole }) {
   const isSignup = mode === "signup";
+  const isAnnotatorSignup = isSignup && role === "annotator";
   const router = useRouter();
   const searchParams = useSearchParams();
   const { refresh: refreshAuth } = useAuth();
@@ -36,6 +38,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [accessCode, setAccessCode] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [remember, setRemember] = useState(true);
   const [errors, setErrors] = useState<Errors>({});
@@ -58,6 +61,9 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     if (isSignup && confirm !== password) {
       next.confirm = "Passwords do not match.";
     }
+    if (isAnnotatorSignup && accessCode.trim() !== ANNOTATOR_ACCESS_CODE) {
+      next.accessCode = "Invalid access code.";
+    }
     return next;
   }
 
@@ -71,7 +77,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     setStatus("loading");
 
     const result = isSignup
-      ? await registerUser({ name, email, password })
+      ? await registerUser({ name, email, password, role })
       : await authenticateUser({ email, password });
 
     if (!result.ok) {
@@ -87,10 +93,11 @@ export default function AuthForm({ mode }: { mode: Mode }) {
 
     const redirectTarget = searchParams.get("redirect");
     const roleHome = ROLE_HOME[result.user.role] ?? "/client-portal";
+    // Only honor a redirect target that actually belongs to this user's own
+    // portal — otherwise a client could be sent into /annotator-portal (or
+    // vice versa) via a crafted ?redirect= param.
     const destination =
-      redirectTarget && redirectTarget.startsWith("/client-portal")
-        ? redirectTarget
-        : roleHome;
+      redirectTarget && redirectTarget.startsWith(roleHome) ? redirectTarget : roleHome;
 
     router.push(destination);
   }
@@ -234,6 +241,27 @@ export default function AuthForm({ mode }: { mode: Mode }) {
             aria-describedby={errors.confirm ? "confirm-error" : undefined}
           />
           <span id="confirm-error">{fieldError("confirm")}</span>
+        </div>
+      )}
+
+      {isAnnotatorSignup && (
+        <div>
+          <label htmlFor="accessCode" className="hs-label">
+            ACCESS CODE
+          </label>
+          <input
+            id="accessCode"
+            name="accessCode"
+            type="text"
+            autoComplete="off"
+            className="hs-input"
+            placeholder="Provided by your team lead"
+            value={accessCode}
+            onChange={(e) => setAccessCode(e.target.value)}
+            aria-invalid={!!errors.accessCode}
+            aria-describedby={errors.accessCode ? "accessCode-error" : undefined}
+          />
+          <span id="accessCode-error">{fieldError("accessCode")}</span>
         </div>
       )}
 
