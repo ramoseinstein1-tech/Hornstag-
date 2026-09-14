@@ -66,6 +66,7 @@ export default function AnnotationWorkspace({
   const [playerSrc, setPlayerSrc] = useState<string | null>(null);
   const [playerSeekTarget, setPlayerSeekTarget] = useState<number | undefined>(undefined);
   const [cuttingProgress, setCuttingProgress] = useState<ClipProgress | null>(null);
+  const [cuttingError, setCuttingError] = useState<string | null>(null);
   const clipUrlCacheRef = useRef<Map<string, string>>(new Map());
 
   // The SEGMENTS tab always needs the full video (marking period
@@ -149,11 +150,24 @@ export default function AnnotationWorkspace({
     setTab("annotate");
 
     if (currentProject.videoPath) {
+      setCuttingError(null);
       cutProjectIntoClips(currentProject, newSegments, (progress) => {
         setCuttingProgress(progress.index < progress.total ? progress : null);
-      }).then(async () => {
-        setSegments(await getSegments(currentProject.id));
-      });
+      })
+        .then(async (result) => {
+          if (!result.ok) {
+            setCuttingError(result.error);
+            return;
+          }
+          if (result.failedLabels.length > 0) {
+            setCuttingError(`Cut ${result.cutCount} of ${newSegments.length} clips — ${result.failedLabels.join(", ")} failed and will use the full video instead.`);
+          }
+          setSegments(await getSegments(currentProject.id));
+        })
+        .catch((err) => {
+          console.error("cutProjectIntoClips rejected unexpectedly:", err);
+          setCuttingError(err instanceof Error ? err.message : "Cutting into clips failed unexpectedly.");
+        });
     }
   }
 
@@ -265,6 +279,12 @@ export default function AnnotationWorkspace({
         <p className="mt-3 flex items-center gap-2 font-mono-tech text-[0.6rem] tracking-[0.1em] text-orange-bright">
           <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-orange/30 border-t-orange" />
           CUTTING INTO PERIOD CLIPS — {cuttingProgress.label.toUpperCase()} ({cuttingProgress.index + 1}/{cuttingProgress.total})
+        </p>
+      )}
+
+      {cuttingError && (
+        <p className="mt-3 max-w-xl font-mono-tech text-[0.6rem] leading-relaxed tracking-[0.06em] text-[#ff9b9b]">
+          ⚠ {cuttingError}
         </p>
       )}
 

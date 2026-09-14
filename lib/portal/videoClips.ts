@@ -21,6 +21,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { VIDEO_BUCKET, getProjectVideoUrl, type Project } from "./store";
 import { setSegmentClipPath, type VideoSegment } from "./segments";
+import type { FFmpeg } from "@ffmpeg/ffmpeg";
 
 const FFMPEG_CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
 
@@ -35,37 +36,56 @@ function mimeForExtension(ext: string): string {
 }
 
 export type ClipProgress = { label: string; index: number; total: number };
+export type CutResult =
+  | { ok: true; cutCount: number; failedLabels: string[] }
+  | { ok: false; error: string };
 
 /**
  * Cuts every segment of `project` into its own video file. No-ops
  * entirely if the project has no real uploaded video (project.videoPath
  * unset) — there's nothing real to cut for the shared sample-clip
- * fallback. Never throws; failures are per-segment and simply leave
- * that segment's clip_path unset.
+ * fallback. Setup failures (ffmpeg.wasm failing to load, the source
+ * video failing to fetch) abort the whole run and are reported via the
+ * returned result; per-segment failures after that don't abort the
+ * rest — a segment with no clip_path just keeps falling back to
+ * seeking within the full source video (see AnnotationWorkspace.tsx).
  */
 export async function cutProjectIntoClips(
   project: Project,
   segments: VideoSegment[],
   onProgress?: (progress: ClipProgress) => void
-): Promise<void> {
-  if (!project.videoPath || segments.length === 0) return;
+): Promise<CutResult> {
+  if (!project.videoPath || segments.length === 0) {
+    return { ok: false, error: "No uploaded video to cut." };
+  }
 
-  const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-  const { toBlobURL, fetchFile } = await import("@ffmpeg/util");
-
-  const ffmpeg = new FFmpeg();
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${FFMPEG_CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${FFMPEG_CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
-  });
-
-  const sourceUrl = await getProjectVideoUrl(project);
+  let ffmpeg: FFmpeg;
   const ext = extensionOf(project.videoPath);
   const inputName = `input.${ext}`;
-  await ffmpeg.writeFile(inputName, await fetchFile(sourceUrl));
+
+  try {
+    const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+    const { toBlobURL, fetchFile } = await import("@ffmpeg/util");
+
+    ffmpeg = new FFmpeg();
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${FFMPEG_CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
+      wasmURL: await toBlobURL(`${FFMPEG_CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
+    });
+
+    const sourceUrl = await getProjectVideoUrl(project);
+    const sourceBytes = await fetchFile(sourceUrl);
+    await ffmpeg.writeFile(inputName, sourceBytes);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("cutProjectIntoClips setup failed:", err);
+    return { ok: false, error: `Couldn't start video cutting: ${message}` };
+  }
 
   const supabase = createClient();
   const mimeType = mimeForExtension(ext);
+  const failedLabels: string[] = [];
+  let cutCount = 0;
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
@@ -89,6 +109,9 @@ export async function cutProjectIntoClips(
       ]);
 
       const data = await ffmpeg.readFile(outputName);
+      if (!data || data.length === 0) {
+        throw new Error("ffmpeg produced an empty file for this segment");
+      }
       const clipPath = `${project.id}/clips/${seg.label}.${ext}`;
       const blob = new Blob([data as BlobPart], { type: mimeType });
 
@@ -98,15 +121,19 @@ export async function cutProjectIntoClips(
       });
       if (uploadError) {
         console.error(`Cutting ${seg.label} failed to upload:`, uploadError);
+        failedLabels.push(seg.label);
         continue;
       }
 
       await setSegmentClipPath(project.id, seg.label, clipPath);
       await ffmpeg.deleteFile(outputName);
+      cutCount++;
     } catch (err) {
       console.error(`Cutting ${seg.label} failed:`, err);
+      failedLabels.push(seg.label);
     }
   }
 
   onProgress?.({ label: "", index: segments.length, total: segments.length });
+  return { ok: true, cutCount, failedLabels };
 }
