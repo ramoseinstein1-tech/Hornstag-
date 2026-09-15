@@ -17,7 +17,6 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
-import { VIDEO_BUCKET } from "./store";
 
 export type VideoSegment = {
   label: string;
@@ -83,13 +82,17 @@ export async function setSegmentClipPath(projectId: string, label: string, clipP
 }
 
 /** A playable signed URL for a cut clip, or null if it can't be
- * resolved (expired path, RLS denial, etc.) — callers fall back to the
- * full source video in that case. */
-export async function getSegmentClipUrl(clipPath: string): Promise<string | null> {
-  const supabase = createClient();
-  const { data, error } = await supabase.storage.from(VIDEO_BUCKET).createSignedUrl(clipPath, 3600);
-  if (error || !data) return null;
-  return data.signedUrl;
+ * resolved (expired path, access denied, etc.) — callers fall back to
+ * the full source video in that case. */
+export async function getSegmentClipUrl(projectId: string, clipPath: string): Promise<string | null> {
+  const res = await fetch("/api/videos/playback-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, key: clipPath }),
+  });
+  if (!res.ok) return null;
+  const { url } = await res.json();
+  return url ?? null;
 }
 
 export async function deleteProjectSegments(projectId: string): Promise<void> {

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { createProject, formatFileSize, officialOutcome, uploadProjectVideo } from "@/lib/portal/store";
-import type { AnnotationScope, GameFormat, RosterPlayer } from "@/lib/portal/store";
+import type { AnnotationScope, GameFormat, RosterPlayer, UploadProgress } from "@/lib/portal/store";
 
 type Errors = Partial<
   Record<"name" | "file" | "roster" | "opponentRoster" | "teamScore" | "opponentScore", string>
@@ -13,10 +13,16 @@ type Errors = Partial<
 
 const emptyPlayer = (): RosterPlayer => ({ id: crypto.randomUUID(), number: "", name: "" });
 
-// Supabase's free tier hard-caps individual uploads at 50MB regardless of
-// bucket settings — checked client-side here for instant feedback instead
-// of a failed round-trip after the rest of the form is already submitted.
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+// A sanity cap, not a platform limit — Cloudflare R2 handles a single PUT
+// up to 5GiB, comfortably covering real game footage.
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "--";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 
 function RosterEditor({
   label,
@@ -123,6 +129,8 @@ export default function UploadProjectPage() {
   const [errors, setErrors] = useState<Errors>({});
   const [status, setStatus] = useState<"idle" | "submitting" | "done">("idle");
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
+  const [uploadStartedAt, setUploadStartedAt] = useState<number | null>(null);
 
   function handleFile(f: File | null) {
     setFile(f);
@@ -134,7 +142,7 @@ export default function UploadProjectPage() {
     if (name.trim().length < 2) next.name = "Give the project a name.";
     if (!file) next.file = "Attach a game film to continue.";
     else if (file.size > MAX_UPLOAD_BYTES) {
-      next.file = "Files must be under 50MB while we're on Supabase's free tier — full game-length uploads unlock once we upgrade.";
+      next.file = "This file is over the 5GiB upload limit.";
     }
 
     const validRoster = roster.filter((p) => p.number.trim() && p.name.trim());
@@ -167,6 +175,8 @@ export default function UploadProjectPage() {
     if (Object.keys(next).length > 0) return;
 
     setUploadError(null);
+    setProgress(null);
+    setUploadStartedAt(null);
     setStatus("submitting");
 
     const createResult = await createProject(user.id, {
@@ -193,7 +203,8 @@ export default function UploadProjectPage() {
     }
     const project = createResult.project;
 
-    const uploadResult = await uploadProjectVideo(project.id, file!);
+    setUploadStartedAt(Date.now());
+    const uploadResult = await uploadProjectVideo(project.id, file!, setProgress);
     if (!uploadResult.ok) {
       // The project row already exists at this point — it just falls back
       // to the shared sample clip in the workspace until the video is
@@ -519,8 +530,7 @@ export default function UploadProjectPage() {
                   </span>
                 </span>
                 <span className="font-mono-tech text-[0.6rem] tracking-[0.1em] text-text-faint">
-                  MP4, MOV — this demo doesn&rsquo;t upload the file anywhere,
-                  it just records the name &amp; size
+                  MP4, MOV, WEBM — up to 5GB
                 </span>
               </button>
             )}
@@ -545,6 +555,31 @@ export default function UploadProjectPage() {
           />
         </div>
 
+        {status === "submitting" && progress && (
+          <div className="flex flex-col gap-2">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-light">
+              <div
+                className="h-full rounded-full transition-[width] duration-200"
+                style={{
+                  width: `${Math.round((progress.loadedBytes / progress.totalBytes) * 100)}%`,
+                  background: "var(--grad-orange)",
+                }}
+              />
+            </div>
+            <p className="font-mono-tech text-[0.62rem] tracking-[0.08em] text-text-faint">
+              {(() => {
+                const pct = Math.round((progress.loadedBytes / progress.totalBytes) * 100);
+                const elapsedSec = uploadStartedAt ? (Date.now() - uploadStartedAt) / 1000 : 0;
+                const bytesPerSec = elapsedSec > 0 ? progress.loadedBytes / elapsedSec : 0;
+                const remainingBytes = progress.totalBytes - progress.loadedBytes;
+                const etaSec = bytesPerSec > 0 ? remainingBytes / bytesPerSec : null;
+                const speedLabel = bytesPerSec > 0 ? `${formatFileSize(bytesPerSec)}/s` : "…";
+                return `${pct}% · ${formatFileSize(progress.loadedBytes)} / ${formatFileSize(progress.totalBytes)} · ${speedLabel}${etaSec != null ? ` · ${formatDuration(etaSec)} left` : ""}`;
+              })()}
+            </p>
+          </div>
+        )}
+
         <button
           type="submit"
           disabled={status === "submitting"}
@@ -560,7 +595,7 @@ export default function UploadProjectPage() {
                 className="flex items-center gap-2"
               >
                 <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-background/30 border-t-background" />
-                SUBMITTING
+                {progress ? "UPLOADING" : "SUBMITTING"}
               </motion.span>
             ) : (
               <motion.span

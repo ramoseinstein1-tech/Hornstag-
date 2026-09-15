@@ -125,7 +125,7 @@ function ClipCard({ clip }: { clip: TaggedClip }) {
   );
 }
 
-function PeriodClipCard({ segment }: { segment: VideoSegment }) {
+function PeriodClipCard({ projectId, segment }: { projectId: string; segment: VideoSegment }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -136,7 +136,7 @@ function PeriodClipCard({ segment }: { segment: VideoSegment }) {
     }
     if (!segment.clipPath) return;
     setLoading(true);
-    const signed = await getSegmentClipUrl(segment.clipPath);
+    const signed = await getSegmentClipUrl(projectId, segment.clipPath);
     setLoading(false);
     if (signed) {
       setUrl(signed);
@@ -398,7 +398,7 @@ export default function ResultsPage() {
               </h2>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {periodClips.map((seg) => (
-                  <PeriodClipCard key={seg.label} segment={seg} />
+                  <PeriodClipCard key={seg.label} projectId={selected.id} segment={seg} />
                 ))}
               </div>
             </div>

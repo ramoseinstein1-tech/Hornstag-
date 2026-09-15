@@ -164,47 +164,62 @@ export async function getProject(projectId: string): Promise<Project | null> {
   return mapProjectRow(data as unknown as ProjectRow);
 }
 
-export const VIDEO_BUCKET = "project-videos";
 /** The shared placeholder every workspace played before Phase 2 — still
  * the fallback for any project with no real video attached (pre-Phase-2
  * demo projects, or one whose upload never completed). */
 const SAMPLE_VIDEO_SRC = "/annotator-sample.mp4";
 
-function videoStoragePath(projectId: string, fileName: string): string {
-  const ext = fileName.includes(".") ? fileName.split(".").pop() : "mp4";
-  return `${projectId}/source.${ext}`;
+export type UploadProgress = { loadedBytes: number; totalBytes: number };
+
+/** PUTs a file to a presigned URL via XMLHttpRequest rather than fetch —
+ * fetch has no upload-progress event, only XHR does, and the upload page
+ * needs real percentage/speed/ETA rather than a fake spinner. */
+function putWithProgress(url: string, file: File, onProgress?: (p: UploadProgress) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.({ loadedBytes: e.loaded, totalBytes: e.total });
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Upload failed (status ${xhr.status}).`));
+    };
+    xhr.onerror = () => reject(new Error("Upload failed — network error."));
+    xhr.send(file);
+  });
 }
 
 /**
- * Uploads a project's real game film to the private `project-videos`
- * bucket (supabase/migrations/00000000000003_video_storage.sql) and
- * records its path on the project row. A separate step from
- * createProject because Storage's RLS policies key off the project's id
- * already existing in the projects table — the row has to exist first.
- *
- * Supabase's free tier hard-caps uploads at 50MB regardless of this
- * bucket's own file_size_limit; that error is translated into a message
- * that explains why, rather than surfacing Supabase's raw wording.
+ * Uploads a project's real game film to Cloudflare R2 (private bucket,
+ * accessed only via short-lived presigned URLs — see
+ * app/api/videos/upload-url/route.ts) and records the resulting object
+ * key on the project row. A separate step from createProject because
+ * the upload-url route needs the project row to already exist, to
+ * verify the caller actually owns it before issuing a presigned URL.
  */
 export async function uploadProjectVideo(
   projectId: string,
-  file: File
+  file: File,
+  onProgress?: (p: UploadProgress) => void
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const supabase = createClient();
-  const path = videoStoragePath(projectId, file.name);
-
-  const { error: uploadError } = await supabase.storage.from(VIDEO_BUCKET).upload(path, file, {
-    upsert: true,
-    contentType: file.type || "video/mp4",
+  const urlRes = await fetch("/api/videos/upload-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, fileName: file.name, contentType: file.type, fileSize: file.size }),
   });
-  if (uploadError) {
-    const message = /maximum allowed size|exceeded the maximum/i.test(uploadError.message)
-      ? "This file is over the current 50MB upload limit (a Supabase free-tier cap) — try a shorter clip for now."
-      : uploadError.message;
-    return { ok: false, error: message };
+  const urlData = await urlRes.json();
+  if (!urlRes.ok) return { ok: false, error: urlData.error ?? "Couldn't prepare the upload." };
+
+  try {
+    await putWithProgress(urlData.url, file, onProgress);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Upload failed." };
   }
 
-  const { error: updateError } = await supabase.from("projects").update({ video_path: path }).eq("id", projectId);
+  const supabase = createClient();
+  const { error: updateError } = await supabase.from("projects").update({ video_path: urlData.key }).eq("id", projectId);
   if (updateError) return { ok: false, error: updateError.message };
 
   return { ok: true };
@@ -217,10 +232,14 @@ export async function uploadProjectVideo(
 export async function getProjectVideoUrl(project: Project): Promise<string> {
   if (!project.videoPath) return SAMPLE_VIDEO_SRC;
 
-  const supabase = createClient();
-  const { data, error } = await supabase.storage.from(VIDEO_BUCKET).createSignedUrl(project.videoPath, 3600);
-  if (error || !data) return SAMPLE_VIDEO_SRC;
-  return data.signedUrl;
+  const res = await fetch("/api/videos/playback-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId: project.id, key: project.videoPath }),
+  });
+  if (!res.ok) return SAMPLE_VIDEO_SRC;
+  const { url } = await res.json();
+  return url ?? SAMPLE_VIDEO_SRC;
 }
 
 /** Every project visible to the CALLER's role — for a client, just their

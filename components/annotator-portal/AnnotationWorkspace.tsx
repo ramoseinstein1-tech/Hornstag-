@@ -160,7 +160,8 @@ export default function AnnotationWorkspace({
             return;
           }
           if (result.failedLabels.length > 0) {
-            setCuttingError(`Cut ${result.cutCount} of ${newSegments.length} clips — ${result.failedLabels.join(", ")} failed and will use the full video instead.`);
+            const detail = result.firstFailureDetail ? ` (${result.firstFailureDetail})` : "";
+            setCuttingError(`Cut ${result.cutCount} of ${newSegments.length} clips — ${result.failedLabels.join(", ")} failed${detail} and will use the full video instead.`);
           }
           setSegments(await getSegments(currentProject.id));
         })
@@ -180,7 +181,7 @@ export default function AnnotationWorkspace({
     if (seg.clipPath) {
       clipUrl = clipUrlCacheRef.current.get(seg.clipPath) ?? null;
       if (!clipUrl) {
-        clipUrl = await getSegmentClipUrl(seg.clipPath);
+        clipUrl = await getSegmentClipUrl(currentProject.id, seg.clipPath);
         if (clipUrl) clipUrlCacheRef.current.set(seg.clipPath, clipUrl);
       }
     }
