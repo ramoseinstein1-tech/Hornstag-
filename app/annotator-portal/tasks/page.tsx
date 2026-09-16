@@ -11,6 +11,7 @@ type Column = { status: AnnotationStatus; label: string; accent: string };
 
 const COLUMNS: Column[] = [
   { status: "Claimed", label: "TO DO", accent: "text-text-muted" },
+  { status: "Correction Required", label: "CORRECTION REQUIRED", accent: "text-[#ff9b9b]" },
   { status: "In Review", label: "IN REVIEW", accent: "text-orange-bright" },
   { status: "Completed", label: "COMPLETED", accent: "text-[#7cd48a]" },
 ];
@@ -55,9 +56,10 @@ export default function AnnotatorTasksPage() {
         Everything you&rsquo;ve claimed, tracked from first tag to final review.
       </p>
 
-      <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-3">
+      <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {COLUMNS.map((col) => {
           const colProjects = projects.filter((p) => p.annotationStatus === col.status);
+          const canSubmit = col.status === "Claimed" || col.status === "Correction Required";
           return (
             <div key={col.status} className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
@@ -84,14 +86,20 @@ export default function AnnotatorTasksPage() {
                       {project.opponentRoster ? ` · ${project.opponentRoster.length} OPPONENT` : ""}
                     </p>
 
-                    {col.status !== "Claimed" && project.submissionNote && (
+                    {col.status === "Correction Required" && (
+                      <p className="mt-2 rounded-md border border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.06] p-2 text-xs leading-relaxed text-[#ff9b9b]">
+                        QA sent this back — review their feedback, fix the tagging, then resubmit.
+                      </p>
+                    )}
+
+                    {!canSubmit && project.submissionNote && (
                       <p className="mt-2 rounded-md border border-border bg-surface/60 p-2 text-xs leading-relaxed text-text-muted">
                         <span className="font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">YOUR NOTE: </span>
                         {project.submissionNote}
                       </p>
                     )}
 
-                    {col.status === "Claimed" && expandedNoteId === project.id && (
+                    {canSubmit && expandedNoteId === project.id && (
                       <textarea
                         className="hs-input mt-2 min-h-[60px] resize-y !text-xs"
                         placeholder="Notes for QA (optional) — e.g. explain a score discrepancy"
@@ -109,7 +117,7 @@ export default function AnnotatorTasksPage() {
                       >
                         OPEN →
                       </Link>
-                      {col.status === "Claimed" && (
+                      {canSubmit && (
                         <>
                           {expandedNoteId !== project.id && (
                             <button

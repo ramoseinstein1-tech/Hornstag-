@@ -12,6 +12,7 @@ type Column = { status: AnnotationStatus; label: string; accent: string };
 const COLUMNS: Column[] = [
   { status: "Unclaimed", label: "UNCLAIMED", accent: "text-text-muted" },
   { status: "Claimed", label: "CLAIMED", accent: "text-text-muted" },
+  { status: "Correction Required", label: "CORRECTION REQUIRED", accent: "text-[#ff9b9b]" },
   { status: "In Review", label: "IN REVIEW", accent: "text-orange-bright" },
   { status: "Completed", label: "COMPLETED", accent: "text-[#7cd48a]" },
   { status: "Rejected", label: "REJECTED", accent: "text-[#ff9b9b]" },
@@ -84,7 +85,7 @@ export default function AdminProjectsPage() {
         </div>
       )}
 
-      <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-5">
+      <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {COLUMNS.map((col) => {
           const colProjects = projects.filter((p) => p.annotationStatus === col.status);
           return (

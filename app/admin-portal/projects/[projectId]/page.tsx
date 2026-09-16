@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getProject, getProjectVideoUrl, deleteProject, updateScoreCheckNote, type Project } from "@/lib/portal/store";
+import { getProject, getProjectVideoUrl, deleteProject, updateScoreCheckNote, getAuditLog, type Project, type AuditLogEntry } from "@/lib/portal/store";
 import { getEvents, pointsForEvent, type AnnotationEvent } from "@/lib/portal/events";
 import { getSegments, type VideoSegment } from "@/lib/portal/segments";
 import { approveAndComplete, sendBackToAnnotator, reopenForReview, rejectProject } from "@/lib/portal/pipeline";
@@ -32,17 +32,20 @@ export default function AdminProjectReviewPage({
   const [actionError, setActionError] = useState<string | null>(null);
   const [scoreNoteInput, setScoreNoteInput] = useState("");
   const [scoreNoteSaved, setScoreNoteSaved] = useState(false);
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
 
   async function refresh() {
-    const [p, evts, segs] = await Promise.all([
+    const [p, evts, segs, audit] = await Promise.all([
       getProject(projectId),
       getEvents(projectId),
       getSegments(projectId),
+      getAuditLog(projectId),
     ]);
     setProject(p);
     setEvents(evts);
     setSegments(segs);
     setScoreNoteInput(p?.scoreCheckNote ?? "");
+    setAuditLog(audit);
     if (p) setVideoUrl(await getProjectVideoUrl(p));
   }
 
@@ -265,8 +268,14 @@ export default function AdminProjectReviewPage({
                 </button>
               </div>
             )}
-            {(project.annotationStatus === "Unclaimed" || project.annotationStatus === "Claimed") && (
-              <p className="text-xs text-text-faint">Nothing submitted for QA review yet.</p>
+            {(project.annotationStatus === "Unclaimed" ||
+              project.annotationStatus === "Claimed" ||
+              project.annotationStatus === "Correction Required") && (
+              <p className="text-xs text-text-faint">
+                {project.annotationStatus === "Correction Required"
+                  ? "Sent back to the annotator — waiting on a resubmission."
+                  : "Nothing submitted for QA review yet."}
+              </p>
             )}
           </div>
         </div>
@@ -275,6 +284,22 @@ export default function AdminProjectReviewPage({
       <div className="mt-8">
         <LiveStatsPanel project={project} events={events} />
       </div>
+
+      {auditLog.length > 0 && (
+        <div className="mt-8 hs-panel p-5">
+          <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.16em] text-text-faint">AUDIT LOG</p>
+          <ul className="flex flex-col divide-y divide-border">
+            {auditLog.map((entry) => (
+              <li key={entry.id} className="flex flex-col gap-0.5 py-2.5 first:pt-0 last:pb-0">
+                <p className="text-sm text-text-muted">{entry.summary}</p>
+                <p className="font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">
+                  {entry.actorRole.toUpperCase()} · {new Date(entry.createdAt).toLocaleString()}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {showReject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm">

@@ -20,7 +20,7 @@ import { createClient } from "@/lib/supabase/client";
 export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed" | "Rejected";
 export type AnnotationScope = "Single Team" | "Both Teams";
 export type GameFormat = "Quarters" | "Halves";
-export type AnnotationStatus = "Unclaimed" | "Claimed" | "In Review" | "Completed" | "Rejected";
+export type AnnotationStatus = "Unclaimed" | "Claimed" | "Correction Required" | "In Review" | "Completed" | "Rejected";
 
 export type RosterPlayer = {
   id: string;
@@ -323,6 +323,36 @@ export async function getActivity(userId: string): Promise<ActivityEntry[]> {
     .order("created_at", { ascending: false });
   if (error || !data) return [];
   return data.map((a) => ({ id: a.id, text: a.text, time: a.created_at }));
+}
+
+export type AuditLogEntry = {
+  id: string;
+  actorName: string;
+  actorRole: string;
+  summary: string;
+  createdAt: string;
+};
+
+/** Admin-only (matches the "audit logs visible to admin" RLS policy) —
+ * every status transition and every scoring-relevant event change for
+ * a project, newest first. See supabase/migrations/
+ * 00000000000015_correction_required.sql for what actually writes
+ * these rows. */
+export async function getAuditLog(projectId: string): Promise<AuditLogEntry[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("id, actor_name, actor_role, summary, created_at")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map((a) => ({
+    id: a.id,
+    actorName: a.actor_name,
+    actorRole: a.actor_role,
+    summary: a.summary,
+    createdAt: a.created_at,
+  }));
 }
 
 /** Adds an entry to a client's activity feed from OUTSIDE their own
