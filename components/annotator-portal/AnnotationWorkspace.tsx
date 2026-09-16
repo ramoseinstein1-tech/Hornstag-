@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { updateRoster, getProjectVideoUrl, type AnnotationStatus, type Project, type RosterPlayer } from "@/lib/portal/store";
 import {
   createEvent,
@@ -23,6 +24,7 @@ import {
   type VideoSegment,
 } from "@/lib/portal/segments";
 import { cutProjectIntoClips, type ClipProgress } from "@/lib/portal/videoClips";
+import { getVideoIssues, type VideoIssue } from "@/lib/portal/videoIssues";
 import VideoPlayer, { type VideoPlayerHandle } from "./VideoPlayer";
 import EventsTimeline from "./EventsTimeline";
 import CreateEventForm from "./CreateEventForm";
@@ -32,14 +34,16 @@ import RosterManager from "./RosterManager";
 import SegmentVideo from "./SegmentVideo";
 import SegmentStepper from "./SegmentStepper";
 import GameClockPanel from "./GameClockPanel";
+import VideoIssuesPanel from "./VideoIssuesPanel";
 
-type Tab = "segments" | "annotate" | "stats" | "roster";
+type Tab = "segments" | "annotate" | "stats" | "roster" | "issues";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "segments", label: "SEGMENTS" },
   { key: "annotate", label: "ANNOTATE" },
   { key: "stats", label: "LIVE STATS" },
   { key: "roster", label: "ROSTER" },
+  { key: "issues", label: "ISSUES" },
 ];
 
 export default function AnnotationWorkspace({
@@ -77,7 +81,9 @@ export default function AnnotationWorkspace({
   const [playerSeekTarget, setPlayerSeekTarget] = useState<number | undefined>(undefined);
   const [cuttingProgress, setCuttingProgress] = useState<ClipProgress | null>(null);
   const [cuttingError, setCuttingError] = useState<string | null>(null);
+  const [videoIssues, setVideoIssues] = useState<VideoIssue[]>([]);
   const clipUrlCacheRef = useRef<Map<string, string>>(new Map());
+  const { user } = useAuth();
 
   // The SEGMENTS tab always needs the full video (marking period
   // boundaries requires scrubbing the whole thing) — only the ANNOTATE
@@ -95,6 +101,7 @@ export default function AnnotationWorkspace({
       setVideoUrl(url);
       setPlayerSrc(url);
     });
+    getVideoIssues(project.id).then(setVideoIssues);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
@@ -455,6 +462,21 @@ export default function AnnotationWorkspace({
             roster={currentProject.roster}
             opponentRoster={currentProject.opponentRoster}
             onSave={handleSaveRoster}
+          />
+        </div>
+      )}
+
+      {tab === "issues" && user && (
+        <div className="mt-6">
+          <VideoIssuesPanel
+            projectId={currentProject.id}
+            issues={videoIssues}
+            currentTimeSeconds={currentTime}
+            reporterName={user.name}
+            reporterRole={user.role}
+            currentUserId={user.id}
+            isAdmin={false}
+            onChange={async () => setVideoIssues(await getVideoIssues(currentProject.id))}
           />
         </div>
       )}

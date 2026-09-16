@@ -14,6 +14,7 @@ import type { Project, PlayerBoxScore, ProjectResults, TaggedClip, ProjectStatus
 import { officialOutcome } from "@/lib/portal/store";
 import { computeRealResults, hasRealAnnotationData } from "@/lib/portal/results";
 import { getSegments, getSegmentClipUrl, type VideoSegment } from "@/lib/portal/segments";
+import { getVideoIssues, ISSUE_TYPE_LABELS, type VideoIssue } from "@/lib/portal/videoIssues";
 
 function StatTile({ label, value }: { label: string; value: string | number }) {
   return (
@@ -166,6 +167,40 @@ function PeriodClipCard({ projectId, segment }: { projectId: string; segment: Vi
   );
 }
 
+function formatHHMMSS(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return [h, m, sec].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+const SEVERITY_STYLES: Record<VideoIssue["severity"], string> = {
+  low: "text-text-faint",
+  medium: "text-orange-bright",
+  high: "text-[#ff9b9b]",
+};
+
+function VideoIssueCard({ issue }: { issue: VideoIssue }) {
+  return (
+    <div className="hs-panel sheen-top p-4">
+      <p className="text-sm text-text">
+        {ISSUE_TYPE_LABELS[issue.issueType]}
+        <span className={`ml-2 font-mono-tech text-[0.56rem] tracking-[0.08em] ${SEVERITY_STYLES[issue.severity]}`}>
+          {issue.severity.toUpperCase()}
+        </span>
+      </p>
+      {issue.description && (
+        <p className="mt-1 text-xs leading-relaxed text-text-muted">{issue.description}</p>
+      )}
+      <p className="mt-1.5 font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">
+        {issue.reporterName} ({issue.reporterRole})
+        {issue.timestampSeconds != null && ` · ${formatHHMMSS(issue.timestampSeconds)}`}
+      </p>
+    </div>
+  );
+}
+
 const PENDING_COPY: Record<Exclude<ProjectStatus, "Completed">, { chip: string; message: (project: Project) => string }> = {
   Processing: {
     chip: "PROCESSING",
@@ -194,6 +229,7 @@ export default function ResultsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<ProjectResults | null>(null);
   const [periodClips, setPeriodClips] = useState<VideoSegment[]>([]);
+  const [videoIssues, setVideoIssues] = useState<VideoIssue[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -204,6 +240,20 @@ export default function ResultsPage() {
   }, [user]);
 
   const selected = allProjects.find((p) => p.id === selectedId) ?? allProjects[0] ?? null;
+
+  useEffect(() => {
+    if (!selected) {
+      setVideoIssues([]);
+      return;
+    }
+    let cancelled = false;
+    getVideoIssues(selected.id).then((issues) => {
+      if (!cancelled) setVideoIssues(issues);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
 
   useEffect(() => {
     if (!selected || selected.status !== "Completed") {
@@ -321,6 +371,19 @@ export default function ResultsPage() {
           ))}
         </select>
       </div>
+
+      {selected && videoIssues.length > 0 && (
+        <div className="mt-8">
+          <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+            VIDEO ISSUES
+          </h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {videoIssues.map((issue) => (
+              <VideoIssueCard key={issue.id} issue={issue} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {selected && selected.status !== "Completed" && (
         <div

@@ -6,11 +6,14 @@ import { useRouter } from "next/navigation";
 import { getProject, getProjectVideoUrl, deleteProject, updateScoreCheckNote, getAuditLog, type Project, type AuditLogEntry } from "@/lib/portal/store";
 import { getEvents, pointsForEvent, type AnnotationEvent } from "@/lib/portal/events";
 import { getSegments, type VideoSegment } from "@/lib/portal/segments";
+import { getVideoIssues, type VideoIssue } from "@/lib/portal/videoIssues";
 import { approveAndComplete, sendBackToAnnotator, reopenForReview, rejectProject } from "@/lib/portal/pipeline";
 import VideoPlayer, { type VideoPlayerHandle } from "@/components/annotator-portal/VideoPlayer";
 import EventsTimeline from "@/components/annotator-portal/EventsTimeline";
 import EventsList from "@/components/annotator-portal/EventsList";
 import LiveStatsPanel from "@/components/annotator-portal/LiveStatsPanel";
+import VideoIssuesPanel from "@/components/annotator-portal/VideoIssuesPanel";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 export default function AdminProjectReviewPage({
   params,
@@ -19,6 +22,7 @@ export default function AdminProjectReviewPage({
 }) {
   const { projectId } = use(params);
   const router = useRouter();
+  const { user } = useAuth();
   const videoRef = useRef<VideoPlayerHandle>(null);
   const [duration, setDuration] = useState(0);
   const [project, setProject] = useState<Project | null | undefined>(undefined);
@@ -33,19 +37,22 @@ export default function AdminProjectReviewPage({
   const [scoreNoteInput, setScoreNoteInput] = useState("");
   const [scoreNoteSaved, setScoreNoteSaved] = useState(false);
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
+  const [videoIssues, setVideoIssues] = useState<VideoIssue[]>([]);
 
   async function refresh() {
-    const [p, evts, segs, audit] = await Promise.all([
+    const [p, evts, segs, audit, issues] = await Promise.all([
       getProject(projectId),
       getEvents(projectId),
       getSegments(projectId),
       getAuditLog(projectId),
+      getVideoIssues(projectId),
     ]);
     setProject(p);
     setEvents(evts);
     setSegments(segs);
     setScoreNoteInput(p?.scoreCheckNote ?? "");
     setAuditLog(audit);
+    setVideoIssues(issues);
     if (p) setVideoUrl(await getProjectVideoUrl(p));
   }
 
@@ -284,6 +291,22 @@ export default function AdminProjectReviewPage({
       <div className="mt-8">
         <LiveStatsPanel project={project} events={events} />
       </div>
+
+      {user && (
+        <div className="mt-8">
+          <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.16em] text-text-faint">VIDEO ISSUES</p>
+          <VideoIssuesPanel
+            projectId={projectId}
+            issues={videoIssues}
+            currentTimeSeconds={duration ? videoRef.current?.getCurrentTime?.() : undefined}
+            reporterName={user.name}
+            reporterRole={user.role}
+            currentUserId={user.id}
+            isAdmin
+            onChange={async () => setVideoIssues(await getVideoIssues(projectId))}
+          />
+        </div>
+      )}
 
       {auditLog.length > 0 && (
         <div className="mt-8 hs-panel p-5">
