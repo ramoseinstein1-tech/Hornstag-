@@ -13,6 +13,7 @@ import {
   type ShotLocation,
   type TeamSide,
 } from "@/lib/portal/events";
+import { computeGameClockSeconds, formatClockMMSS, parseClockMMSS, type VideoSegment } from "@/lib/portal/segments";
 import CourtDiagram from "./CourtDiagram";
 
 const EVENT_TYPE_ORDER: EventType[] = [
@@ -68,6 +69,7 @@ const emptyState = {
 
 export default function CreateEventForm({
   project,
+  segments,
   currentTimeSeconds,
   editingEvent,
   onSave,
@@ -75,6 +77,7 @@ export default function CreateEventForm({
   activeSegmentLabel,
 }: {
   project: Project;
+  segments: VideoSegment[];
   currentTimeSeconds: number;
   editingEvent: AnnotationEvent | null;
   onSave: (input: NewEventInput) => Promise<{ ok: boolean; error?: string }>;
@@ -85,6 +88,8 @@ export default function CreateEventForm({
 
   const [timestampInput, setTimestampInput] = useState(formatHHMMSS(currentTimeSeconds));
   const [touched, setTouched] = useState(false);
+  const [gameClockInput, setGameClockInput] = useState("");
+  const [gameClockTouched, setGameClockTouched] = useState(false);
   const [teamSide, setTeamSide] = useState<TeamSide>("team");
   const [eventType, setEventType] = useState<EventType | "">(emptyState.eventType);
   const [playerId, setPlayerId] = useState(emptyState.playerId);
@@ -101,10 +106,27 @@ export default function CreateEventForm({
     }
   }, [currentTimeSeconds, touched, editingEvent]);
 
+  // Auto-computed from the active period's running game clock (see
+  // lib/portal/segments.ts) at whatever timestamp is currently entered —
+  // re-derives every time the timestamp changes, until the annotator
+  // directly edits this field themselves (the manual-correction case),
+  // same touched-flag pattern as the timestamp field above.
+  useEffect(() => {
+    if (gameClockTouched || editingEvent) return;
+    const seconds = parseHHMMSS(timestampInput);
+    if (seconds === null) return;
+    const activeSegment = segments.find((s) => s.label === activeSegmentLabel);
+    const computed = activeSegment ? computeGameClockSeconds(activeSegment, seconds) : null;
+    setGameClockInput(computed != null ? formatClockMMSS(computed) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timestampInput, activeSegmentLabel, segments, gameClockTouched, editingEvent]);
+
   useEffect(() => {
     if (editingEvent) {
       setTimestampInput(formatHHMMSS(editingEvent.timestampSeconds));
       setTouched(true);
+      setGameClockInput(editingEvent.gameClockSeconds != null ? formatClockMMSS(editingEvent.gameClockSeconds) : "");
+      setGameClockTouched(true);
       setTeamSide(editingEvent.teamSide ?? "team");
       setEventType(editingEvent.eventType);
       setPlayerId(editingEvent.playerId ?? "");
@@ -126,6 +148,7 @@ export default function CreateEventForm({
     setShotLocation(emptyState.shotLocation);
     setCustomLabel(emptyState.customLabel);
     setTouched(false);
+    setGameClockTouched(false);
     setError(null);
   }
 
@@ -159,6 +182,7 @@ export default function CreateEventForm({
       made: isShotType ? made : undefined,
       shotLocation: isShotType ? shotLocation ?? undefined : undefined,
       customLabel: eventType === "custom" ? customLabel.trim() || undefined : undefined,
+      gameClockSeconds: parseClockMMSS(gameClockInput) ?? undefined,
     };
 
     const result = await onSave(input);
@@ -223,7 +247,7 @@ export default function CreateEventForm({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label htmlFor="evt-timestamp" className="hs-label">TIMESTAMP</label>
           <div className="flex gap-2">
@@ -248,6 +272,23 @@ export default function CreateEventForm({
           >
             USE CURRENT
           </button>
+        </div>
+
+        <div>
+          <label htmlFor="evt-game-clock" className="hs-label">GAME CLOCK</label>
+          <input
+            id="evt-game-clock"
+            className="hs-input"
+            value={gameClockInput}
+            onChange={(e) => {
+              setGameClockInput(e.target.value);
+              setGameClockTouched(true);
+            }}
+            placeholder="—"
+          />
+          <p className="mt-1.5 font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint">
+            {gameClockTouched ? "Manually set" : "Auto-tracked — edit to correct"}
+          </p>
         </div>
 
         <div>

@@ -59,6 +59,7 @@ export default function SegmentVideo({
       label,
       startSeconds: boundaries[i],
       endSeconds: boundaries[i + 1],
+      clockRunning: false,
     }));
     onSave(segments);
   }

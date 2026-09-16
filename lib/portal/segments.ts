@@ -23,6 +23,11 @@ export type VideoSegment = {
   startSeconds: number;
   endSeconds: number;
   clipPath?: string;
+  /** Phase 5 game clock — see computeGameClockSeconds below. Undefined
+   * means this period's clock hasn't been started yet. */
+  clockReferenceVideoSeconds?: number;
+  clockReferenceValueSeconds?: number;
+  clockRunning: boolean;
 };
 
 type SegmentRow = {
@@ -31,6 +36,9 @@ type SegmentRow = {
   end_seconds: number;
   sort_order: number;
   clip_path: string | null;
+  clock_reference_video_seconds: number | null;
+  clock_reference_value_seconds: number | null;
+  clock_running: boolean;
 };
 
 /** Null means the video hasn't been segmented yet — the annotate tab
@@ -39,7 +47,7 @@ export async function getSegments(projectId: string): Promise<VideoSegment[] | n
   const supabase = createClient();
   const { data, error } = await supabase
     .from("video_segments")
-    .select("label, start_seconds, end_seconds, sort_order, clip_path")
+    .select("label, start_seconds, end_seconds, sort_order, clip_path, clock_reference_video_seconds, clock_reference_value_seconds, clock_running")
     .eq("project_id", projectId)
     .order("sort_order", { ascending: true });
 
@@ -49,6 +57,9 @@ export async function getSegments(projectId: string): Promise<VideoSegment[] | n
     startSeconds: r.start_seconds,
     endSeconds: r.end_seconds,
     clipPath: r.clip_path ?? undefined,
+    clockReferenceVideoSeconds: r.clock_reference_video_seconds ?? undefined,
+    clockReferenceValueSeconds: r.clock_reference_value_seconds ?? undefined,
+    clockRunning: r.clock_running,
   }));
 }
 
@@ -79,6 +90,93 @@ export async function saveSegments(projectId: string, segments: VideoSegment[]):
 export async function setSegmentClipPath(projectId: string, label: string, clipPath: string): Promise<void> {
   const supabase = createClient();
   await supabase.from("video_segments").update({ clip_path: clipPath }).eq("project_id", projectId).eq("label", label);
+}
+
+/**
+ * GAME CLOCK (Phase 5)
+ * ─────────────────────────────────────────────────────────────────
+ * A real basketball clock, distinct from the video's own timestamp —
+ * it ticks down in lockstep with video playback once started, pauses
+ * when the annotator pauses it (fouls, timeouts, stoppages), and
+ * because it's purely a function of video position rather than
+ * wall-clock time, rewinding the video while it's running naturally
+ * moves it back up too, with no special-case logic needed.
+ */
+
+/** The clock's value at a given video position — null if this period's
+ * clock hasn't been started yet. Not clamped at zero: an annotator who
+ * started the clock a little early sees an honest (if odd-looking)
+ * negative reading rather than a silently wrong one. */
+export function computeGameClockSeconds(segment: VideoSegment, videoTimeSeconds: number): number | null {
+  if (segment.clockReferenceVideoSeconds == null || segment.clockReferenceValueSeconds == null) return null;
+  if (segment.clockRunning) {
+    return segment.clockReferenceValueSeconds - (videoTimeSeconds - segment.clockReferenceVideoSeconds);
+  }
+  return segment.clockReferenceValueSeconds;
+}
+
+/** Plain M:SS — not H:MM:SS, since a basketball period is always well
+ * under an hour. Handles negative values (see computeGameClockSeconds). */
+export function formatClockMMSS(seconds: number): string {
+  const negative = seconds < 0;
+  const abs = Math.round(Math.abs(seconds));
+  const m = Math.floor(abs / 60);
+  const s = abs % 60;
+  return `${negative ? "-" : ""}${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Inverse of formatClockMMSS — "M:SS" or "MM:SS" only, no hours (a
+ * basketball period is never long enough to need one). Returns null for
+ * anything that doesn't parse cleanly, including a blank string. */
+export function parseClockMMSS(input: string): number | null {
+  const parts = input.trim().split(":").map((p) => p.trim());
+  if (parts.length !== 2 || parts.some((p) => p === "" || !/^\d+$/.test(p))) return null;
+  const [m, s] = parts.map(Number);
+  if (s >= 60) return null;
+  return m * 60 + s;
+}
+
+/** Starts a period's clock: the annotator has typed the period's
+ * starting time (e.g. 600 for "10:00") and clicked START at the jump
+ * ball, at the given video position. */
+export async function startPeriodClock(
+  projectId: string,
+  label: string,
+  startValueSeconds: number,
+  atVideoSeconds: number
+): Promise<void> {
+  const supabase = createClient();
+  await supabase
+    .from("video_segments")
+    .update({
+      clock_reference_video_seconds: atVideoSeconds,
+      clock_reference_value_seconds: startValueSeconds,
+      clock_running: true,
+    })
+    .eq("project_id", projectId)
+    .eq("label", label);
+}
+
+/** Pauses a running clock. `frozenValueSeconds` should already be
+ * computed (via computeGameClockSeconds) at the moment of pausing —
+ * this just bakes that frozen value in rather than re-deriving it. */
+export async function pausePeriodClock(projectId: string, label: string, frozenValueSeconds: number): Promise<void> {
+  const supabase = createClient();
+  await supabase
+    .from("video_segments")
+    .update({ clock_reference_value_seconds: frozenValueSeconds, clock_running: false })
+    .eq("project_id", projectId)
+    .eq("label", label);
+}
+
+/** Resumes a paused clock from the current video position. */
+export async function resumePeriodClock(projectId: string, label: string, atVideoSeconds: number): Promise<void> {
+  const supabase = createClient();
+  await supabase
+    .from("video_segments")
+    .update({ clock_reference_video_seconds: atVideoSeconds, clock_running: true })
+    .eq("project_id", projectId)
+    .eq("label", label);
 }
 
 /** A playable signed URL for a cut clip, or null if it can't be

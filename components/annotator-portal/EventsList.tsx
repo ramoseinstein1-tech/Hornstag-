@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Project, RosterPlayer } from "@/lib/portal/store";
 import type { AnnotationEvent, TeamSide } from "@/lib/portal/events";
 import { EVENT_TYPE_LABELS, SHOT_EVENT_TYPES } from "@/lib/portal/events";
+import { formatClockMMSS } from "@/lib/portal/segments";
 
 type Filter = "all" | "team" | "opponent";
 
@@ -88,6 +89,11 @@ export default function EventsList({
                   <span className="font-mono-tech text-[0.62rem] tracking-[0.06em] text-orange-bright">
                     {formatTimestamp(evt.timestampSeconds)}
                   </span>
+                  {evt.gameClockSeconds != null && (
+                    <span className="font-mono-tech text-[0.52rem] tracking-[0.06em] text-text-muted">
+                      {formatClockMMSS(evt.gameClockSeconds)}
+                    </span>
+                  )}
                   {evt.period && (
                     <span className="font-mono-tech text-[0.52rem] tracking-[0.06em] text-text-faint">
                       {evt.period}

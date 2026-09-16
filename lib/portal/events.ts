@@ -85,6 +85,12 @@ export type AnnotationEvent = {
   shotLocation?: ShotLocation;
   /** Only used when eventType === "custom". */
   customLabel?: string;
+  /** Seconds remaining on the basketball game clock at this moment —
+   * distinct from timestampSeconds (the video's own position). Auto-
+   * computed from the period's running clock (see lib/portal/segments.ts's
+   * computeGameClockSeconds) but editable by the annotator to correct it.
+   * Undefined if the period's clock was never started. */
+  gameClockSeconds?: number;
   /** Which segment (e.g. "Q2", "H1") this timestamp falls in — derived
    * from lib/portal/segments.ts's periodForTimestamp() at save time, not
    * from whichever segment the annotator had selected in the UI, so it's
@@ -106,6 +112,7 @@ type EventRow = {
   shot_x: number | null;
   shot_y: number | null;
   custom_label: string | null;
+  game_clock_seconds: number | null;
   period: number | null;
   created_at: string;
   updated_at: string;
@@ -122,6 +129,7 @@ function mapEventRow(row: EventRow): AnnotationEvent {
     made: row.made ?? undefined,
     shotLocation: row.shot_x != null && row.shot_y != null ? { x: row.shot_x, y: row.shot_y } : undefined,
     customLabel: row.custom_label ?? undefined,
+    gameClockSeconds: row.game_clock_seconds ?? undefined,
     period: row.period != null ? String(row.period) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -159,6 +167,7 @@ function inputToRow(projectId: string, input: NewEventInput) {
     shot_x: input.shotLocation?.x ?? null,
     shot_y: input.shotLocation?.y ?? null,
     custom_label: input.customLabel ?? null,
+    game_clock_seconds: input.gameClockSeconds ?? null,
     period: input.period != null ? Number(input.period) : null,
   };
 }
@@ -202,6 +211,7 @@ export async function updateEvent(
     updates.shot_y = patch.shotLocation?.y ?? null;
   }
   if ("customLabel" in patch) updates.custom_label = patch.customLabel ?? null;
+  if ("gameClockSeconds" in patch) updates.game_clock_seconds = patch.gameClockSeconds ?? null;
   if ("period" in patch) updates.period = patch.period != null ? Number(patch.period) : null;
 
   const { data, error } = await supabase

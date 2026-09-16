@@ -12,7 +12,16 @@ import {
   type AnnotationEvent,
   type NewEventInput,
 } from "@/lib/portal/events";
-import { getSegments, saveSegments, getSegmentClipUrl, periodForTimestamp, type VideoSegment } from "@/lib/portal/segments";
+import {
+  getSegments,
+  saveSegments,
+  getSegmentClipUrl,
+  periodForTimestamp,
+  startPeriodClock,
+  pausePeriodClock,
+  resumePeriodClock,
+  type VideoSegment,
+} from "@/lib/portal/segments";
 import { cutProjectIntoClips, type ClipProgress } from "@/lib/portal/videoClips";
 import VideoPlayer, { type VideoPlayerHandle } from "./VideoPlayer";
 import EventsTimeline from "./EventsTimeline";
@@ -22,6 +31,7 @@ import LiveStatsPanel from "./LiveStatsPanel";
 import RosterManager from "./RosterManager";
 import SegmentVideo from "./SegmentVideo";
 import SegmentStepper from "./SegmentStepper";
+import GameClockPanel from "./GameClockPanel";
 
 type Tab = "segments" | "annotate" | "stats" | "roster";
 
@@ -210,6 +220,31 @@ export default function AnnotationWorkspace({
     setCurrentTime(seg.startSeconds);
   }
 
+  function updateActiveSegment(patch: Partial<VideoSegment>) {
+    setSegments((prev) => prev && prev.map((s, i) => (i === activeSegmentIndex ? { ...s, ...patch } : s)));
+  }
+
+  async function handleStartClock(startValueSeconds: number) {
+    if (!segments) return;
+    const seg = segments[activeSegmentIndex];
+    await startPeriodClock(currentProject.id, seg.label, startValueSeconds, currentTime);
+    updateActiveSegment({ clockReferenceVideoSeconds: currentTime, clockReferenceValueSeconds: startValueSeconds, clockRunning: true });
+  }
+
+  async function handlePauseClock(frozenValueSeconds: number) {
+    if (!segments) return;
+    const seg = segments[activeSegmentIndex];
+    await pausePeriodClock(currentProject.id, seg.label, frozenValueSeconds);
+    updateActiveSegment({ clockReferenceValueSeconds: frozenValueSeconds, clockRunning: false });
+  }
+
+  async function handleResumeClock() {
+    if (!segments) return;
+    const seg = segments[activeSegmentIndex];
+    await resumePeriodClock(currentProject.id, seg.label, currentTime);
+    updateActiveSegment({ clockReferenceVideoSeconds: currentTime, clockRunning: true });
+  }
+
   async function handleSave(input: NewEventInput): Promise<{ ok: boolean; error?: string }> {
     const period = segments ? periodForTimestamp(segments, input.timestampSeconds) : undefined;
     const enrichedInput: NewEventInput = { ...input, period };
@@ -366,11 +401,21 @@ export default function AnnotationWorkspace({
                     events={events}
                     onSelect={handleSelectSegment}
                   />
+                  {!readOnly && segments[activeSegmentIndex] && (
+                    <GameClockPanel
+                      segment={segments[activeSegmentIndex]}
+                      currentTimeSeconds={currentTime}
+                      onStart={handleStartClock}
+                      onPause={handlePauseClock}
+                      onResume={handleResumeClock}
+                    />
+                  )}
                   {readOnly ? (
                     <div className="hs-panel p-5 text-center text-sm text-text-muted">{lockedMessage}</div>
                   ) : (
                     <CreateEventForm
                       project={currentProject}
+                      segments={segments}
                       currentTimeSeconds={currentTime}
                       editingEvent={editingEvent}
                       onSave={handleSave}
