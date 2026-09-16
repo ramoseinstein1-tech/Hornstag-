@@ -18,6 +18,8 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
+import { getProject, clearProjectVideoSource } from "./store";
+import { getSegments } from "./segments";
 
 type RpcResult = { ok: true } | { ok: false; error: string };
 
@@ -45,9 +47,26 @@ export function submitForReview(projectId: string, note?: string): Promise<RpcRe
 
 /** Admin only: In Review -> Completed. This is the moment real annotated
  * results become visible on the client's Results page — the RPC itself
- * pushes the client's activity-feed entry server-side. */
-export function approveAndComplete(projectId: string): Promise<RpcResult> {
-  return callRpc("approve_and_complete", { target_project_id: projectId });
+ * pushes the client's activity-feed entry server-side.
+ *
+ * Also reclaims R2 storage once every period has a real cut clip: the
+ * raw source video is redundant at that point, since results, tagged
+ * clips, and period clips all serve from the clips instead. Skipped
+ * whenever any period's clip is missing (cutting failed or never ran) —
+ * keeping the source is the safe fallback there, since it may be the
+ * only remaining copy that period could still be re-cut from. Best-
+ * effort: a failed clear doesn't fail the approval itself. */
+export async function approveAndComplete(projectId: string): Promise<RpcResult> {
+  const result = await callRpc("approve_and_complete", { target_project_id: projectId });
+  if (!result.ok) return result;
+
+  const [project, segments] = await Promise.all([getProject(projectId), getSegments(projectId)]);
+  if (project?.videoPath && segments && segments.length > 0 && segments.every((s) => s.clipPath)) {
+    const cleared = await clearProjectVideoSource(projectId);
+    if (!cleared.ok) console.error(`Couldn't clear source video for ${projectId}:`, cleared.error);
+  }
+
+  return result;
 }
 
 /** Admin only: In Review -> Claimed (QA rejection, sent back for fixes). */

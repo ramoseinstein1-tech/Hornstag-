@@ -55,6 +55,11 @@ export type Project = {
   fileName?: string;
   fileSize?: string;
   videoPath?: string;
+  /** True once the raw source was deleted from R2 after every period had
+   * a real cut clip (see clearProjectVideoSource) — distinct from a
+   * project that simply never had a real upload, which also has no
+   * videoPath but this stays false, so the UI can tell the two apart. */
+  videoCleared: boolean;
   status: ProjectStatus;
   progress: number;
   officialScore?: OfficialScore;
@@ -94,6 +99,7 @@ type ProjectRow = {
   file_name: string | null;
   file_size: string | null;
   video_path: string | null;
+  video_cleared: boolean;
   status: ProjectStatus;
   progress: number;
   official_score_team: number | null;
@@ -135,6 +141,7 @@ function mapProjectRow(row: ProjectRow): Project {
     fileName: row.file_name ?? undefined,
     fileSize: row.file_size ?? undefined,
     videoPath: row.video_path ?? undefined,
+    videoCleared: row.video_cleared,
     status: row.status,
     progress: row.progress,
     officialScore:
@@ -252,6 +259,30 @@ export async function getProjectVideoUrl(project: Project): Promise<string> {
   if (!res.ok) return SAMPLE_VIDEO_SRC;
   const { url } = await res.json();
   return url ?? SAMPLE_VIDEO_SRC;
+}
+
+/** Deletes a project's raw source video from R2 (not its period clips)
+ * and records that on the row — called once from
+ * lib/portal/pipeline.ts's approveAndComplete, only after confirming
+ * every period already has a real clip. Only nulls video_path once the
+ * R2 delete has actually succeeded, so a failed delete never leaves a
+ * dangling pointer to a file that's still really there. */
+export async function clearProjectVideoSource(projectId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch("/api/videos/delete-source", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: data.error ?? "Couldn't delete the source video." };
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ video_path: null, video_cleared: true })
+    .eq("id", projectId);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 /** Every project visible to the CALLER's role — for a client, just their

@@ -53,7 +53,13 @@ export default function AdminProjectReviewPage({
     setScoreNoteInput(p?.scoreCheckNote ?? "");
     setAuditLog(audit);
     setVideoIssues(issues);
-    if (p) setVideoUrl(await getProjectVideoUrl(p));
+    // A cleared source (games/{projectId}/original/ deleted once every
+    // period had a real clip — see approveAndComplete) has no videoPath
+    // either, same as a project that never had a real upload — skip the
+    // call so it doesn't fall back to the unrelated sample clip and look
+    // like a real recording.
+    if (p && !p.videoCleared) setVideoUrl(await getProjectVideoUrl(p));
+    else setVideoUrl(null);
   }
 
   useEffect(() => {
@@ -193,6 +199,11 @@ export default function AdminProjectReviewPage({
         <div className="flex flex-col gap-4">
           {videoUrl ? (
             <VideoPlayer ref={videoRef} src={videoUrl} onDurationChange={setDuration} />
+          ) : project.videoCleared ? (
+            <div className="hs-panel flex aspect-video flex-col items-center justify-center gap-1 p-6 text-center text-sm text-text-faint">
+              <p>Source video was cleared after approval to save storage.</p>
+              <p className="text-xs">Period clips are still available below.</p>
+            </div>
           ) : (
             <div className="hs-panel flex aspect-video items-center justify-center text-sm text-text-faint">
               Loading video…

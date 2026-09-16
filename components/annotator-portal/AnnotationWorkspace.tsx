@@ -97,10 +97,17 @@ export default function AnnotationWorkspace({
       setSegments(s);
       setTab(s ? "annotate" : "segments");
     });
-    getProjectVideoUrl(project).then((url) => {
-      setVideoUrl(url);
-      setPlayerSrc(url);
-    });
+    // A cleared source (deleted once every period had a real clip — see
+    // lib/portal/pipeline.ts's approveAndComplete) has no videoPath
+    // either, same as a project that never had a real upload — skip the
+    // call so a reopened project doesn't fall back to the unrelated
+    // sample clip and look like real footage.
+    if (!project.videoCleared) {
+      getProjectVideoUrl(project).then((url) => {
+        setVideoUrl(url);
+        setPlayerSrc(url);
+      });
+    }
     getVideoIssues(project.id).then(setVideoIssues);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
@@ -376,7 +383,7 @@ export default function AnnotationWorkspace({
               />
             ) : (
               <div className="hs-panel flex aspect-video items-center justify-center text-sm text-text-faint">
-                Loading video…
+                {project.videoCleared ? "Source video was cleared after approval." : "Loading video…"}
               </div>
             )}
             {effectiveActiveClip && (
