@@ -378,6 +378,15 @@ export default function AnnotationWorkspace({
                 period to jump elsewhere in the full game.
               </p>
             )}
+            {tab === "annotate" && !readOnly && segments && segments[activeSegmentIndex] && (
+              <GameClockPanel
+                segment={segments[activeSegmentIndex]}
+                currentTimeSeconds={currentTime}
+                onStart={handleStartClock}
+                onPause={handlePauseClock}
+                onResume={handleResumeClock}
+              />
+            )}
             <EventsTimeline durationSeconds={fullDuration} events={events} onSeek={handleSeek} segments={segments} />
           </div>
 
@@ -401,15 +410,6 @@ export default function AnnotationWorkspace({
                     events={events}
                     onSelect={handleSelectSegment}
                   />
-                  {!readOnly && segments[activeSegmentIndex] && (
-                    <GameClockPanel
-                      segment={segments[activeSegmentIndex]}
-                      currentTimeSeconds={currentTime}
-                      onStart={handleStartClock}
-                      onPause={handlePauseClock}
-                      onResume={handleResumeClock}
-                    />
-                  )}
                   {readOnly ? (
                     <div className="hs-panel p-5 text-center text-sm text-text-muted">{lockedMessage}</div>
                   ) : (
