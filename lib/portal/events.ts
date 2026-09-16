@@ -25,12 +25,22 @@ export type EventType =
   | "block"
   | "turnover"
   | "foul"
+  | "offensive_foul"
+  | "defensive_foul"
   | "technical_foul"
   | "offensive_rebound"
   | "defensive_rebound"
+  | "substitution_in"
+  | "substitution_out"
+  | "timeout"
   | "custom";
 
 export const SHOT_EVENT_TYPES: readonly EventType[] = ["two_point", "three_point", "free_throw"];
+
+/** The only event type with neither a team nor a player — a bare
+ * timestamp is all it needs (confirmed with the user: "don't think we
+ * need to record whose timeout it is"). */
+export const TEAMLESS_EVENT_TYPES: readonly EventType[] = ["timeout"];
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   two_point: "Two Point",
@@ -41,9 +51,14 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   block: "Block",
   turnover: "Turnover",
   foul: "Foul",
+  offensive_foul: "Offensive Foul",
+  defensive_foul: "Defensive Foul",
   technical_foul: "Technical Foul",
   offensive_rebound: "Offensive Rebound",
   defensive_rebound: "Defensive Rebound",
+  substitution_in: "Substitution In",
+  substitution_out: "Substitution Out",
+  timeout: "Timeout",
   custom: "Custom",
 };
 
@@ -59,8 +74,10 @@ export type AnnotationEvent = {
   id: string;
   projectId: string;
   timestampSeconds: number;
-  teamSide: TeamSide;
-  playerId: string;
+  /** Absent only for TEAMLESS_EVENT_TYPES (currently just Timeout). */
+  teamSide?: TeamSide;
+  /** Absent only for TEAMLESS_EVENT_TYPES (currently just Timeout). */
+  playerId?: string;
   eventType: EventType;
   /** Only meaningful when eventType is a shot type. */
   made?: boolean;
@@ -82,8 +99,8 @@ type EventRow = {
   id: string;
   project_id: string;
   timestamp_seconds: number;
-  team_side: TeamSide;
-  player_id: string;
+  team_side: TeamSide | null;
+  player_id: string | null;
   event_type: EventType;
   made: boolean | null;
   shot_x: number | null;
@@ -99,8 +116,8 @@ function mapEventRow(row: EventRow): AnnotationEvent {
     id: row.id,
     projectId: row.project_id,
     timestampSeconds: row.timestamp_seconds,
-    teamSide: row.team_side,
-    playerId: row.player_id,
+    teamSide: row.team_side ?? undefined,
+    playerId: row.player_id ?? undefined,
     eventType: row.event_type,
     made: row.made ?? undefined,
     shotLocation: row.shot_x != null && row.shot_y != null ? { x: row.shot_x, y: row.shot_y } : undefined,
@@ -135,8 +152,8 @@ function inputToRow(projectId: string, input: NewEventInput) {
   return {
     project_id: projectId,
     timestamp_seconds: input.timestampSeconds,
-    team_side: input.teamSide,
-    player_id: input.playerId,
+    team_side: input.teamSide ?? null,
+    player_id: input.playerId ?? null,
     event_type: input.eventType,
     made: input.made ?? null,
     shot_x: input.shotLocation?.x ?? null,
@@ -173,8 +190,11 @@ export async function updateEvent(
 
   const updates: Record<string, unknown> = {};
   if (patch.timestampSeconds !== undefined) updates.timestamp_seconds = patch.timestampSeconds;
-  if (patch.teamSide !== undefined) updates.team_side = patch.teamSide;
-  if (patch.playerId !== undefined) updates.player_id = patch.playerId;
+  // "in" rather than !== undefined — editing an event to/from Timeout
+  // needs to actually clear/set these to null, not leave a stale value
+  // just because the new value happens to be undefined.
+  if ("teamSide" in patch) updates.team_side = patch.teamSide ?? null;
+  if ("playerId" in patch) updates.player_id = patch.playerId ?? null;
   if (patch.eventType !== undefined) updates.event_type = patch.eventType;
   if ("made" in patch) updates.made = patch.made ?? null;
   if ("shotLocation" in patch) {
@@ -243,7 +263,9 @@ export function computeLiveStats(events: AnnotationEvent[], teamSide: TeamSide):
   }
 
   for (const evt of events) {
-    if (evt.teamSide !== teamSide) continue;
+    // Timeout (the only teamless/playerless type) never matches either
+    // side and is naturally skipped here.
+    if (evt.teamSide !== teamSide || !evt.playerId) continue;
     const s = statsFor(evt.playerId);
     s.pts += pointsForEvent(evt);
     if (evt.eventType === "offensive_rebound" || evt.eventType === "defensive_rebound") s.reb += 1;
@@ -251,7 +273,9 @@ export function computeLiveStats(events: AnnotationEvent[], teamSide: TeamSide):
     if (evt.eventType === "steal") s.stl += 1;
     if (evt.eventType === "block") s.blk += 1;
     if (evt.eventType === "turnover") s.tov += 1;
-    if (evt.eventType === "foul" || evt.eventType === "technical_foul") s.pf += 1;
+    // Offensive/defensive fouls both still roll up into personal fouls
+    // here — the split matters for the event log, not this stat tally.
+    if (evt.eventType === "foul" || evt.eventType === "offensive_foul" || evt.eventType === "defensive_foul" || evt.eventType === "technical_foul") s.pf += 1;
   }
 
   return Array.from(byPlayer.values());

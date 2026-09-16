@@ -6,6 +6,7 @@ import type { Project } from "@/lib/portal/store";
 import {
   EVENT_TYPE_LABELS,
   SHOT_EVENT_TYPES,
+  TEAMLESS_EVENT_TYPES,
   type AnnotationEvent,
   type EventType,
   type NewEventInput,
@@ -23,9 +24,14 @@ const EVENT_TYPE_ORDER: EventType[] = [
   "block",
   "turnover",
   "foul",
+  "offensive_foul",
+  "defensive_foul",
   "technical_foul",
   "offensive_rebound",
   "defensive_rebound",
+  "substitution_in",
+  "substitution_out",
+  "timeout",
   "custom",
 ];
 
@@ -99,9 +105,9 @@ export default function CreateEventForm({
     if (editingEvent) {
       setTimestampInput(formatHHMMSS(editingEvent.timestampSeconds));
       setTouched(true);
-      setTeamSide(editingEvent.teamSide);
+      setTeamSide(editingEvent.teamSide ?? "team");
       setEventType(editingEvent.eventType);
-      setPlayerId(editingEvent.playerId);
+      setPlayerId(editingEvent.playerId ?? "");
       setMade(editingEvent.made ?? false);
       setShotLocation(editingEvent.shotLocation ?? null);
       setCustomLabel(editingEvent.customLabel ?? "");
@@ -111,6 +117,7 @@ export default function CreateEventForm({
 
   const roster = teamSide === "team" ? project.roster : project.opponentRoster ?? [];
   const isShotType = eventType !== "" && SHOT_EVENT_TYPES.includes(eventType);
+  const isTeamless = eventType !== "" && TEAMLESS_EVENT_TYPES.includes(eventType);
 
   function resetForm() {
     setEventType(emptyState.eventType);
@@ -135,7 +142,7 @@ export default function CreateEventForm({
       setError("Select an event type.");
       return;
     }
-    if (!playerId) {
+    if (!isTeamless && !playerId) {
       setError("Select a player.");
       return;
     }
@@ -146,8 +153,8 @@ export default function CreateEventForm({
 
     const input: NewEventInput = {
       timestampSeconds: seconds,
-      teamSide,
-      playerId,
+      teamSide: isTeamless ? undefined : teamSide,
+      playerId: isTeamless ? undefined : playerId,
       eventType,
       made: isShotType ? made : undefined,
       shotLocation: isShotType ? shotLocation ?? undefined : undefined,
@@ -191,7 +198,7 @@ export default function CreateEventForm({
         )}
       </div>
 
-      {bothTeams && (
+      {bothTeams && !isTeamless && (
         <div>
           <span className="hs-label">TEAM</span>
           <div className="grid grid-cols-2 gap-2">
@@ -262,22 +269,24 @@ export default function CreateEventForm({
           </select>
         </div>
 
-        <div>
-          <label htmlFor="evt-player" className="hs-label">PLAYER</label>
-          <select
-            id="evt-player"
-            className="hs-input"
-            value={playerId}
-            onChange={(e) => setPlayerId(e.target.value)}
-          >
-            <option value="">Select player…</option>
-            {roster.map((p) => (
-              <option key={p.id} value={p.id}>
-                #{p.number} {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {!isTeamless && (
+          <div>
+            <label htmlFor="evt-player" className="hs-label">PLAYER</label>
+            <select
+              id="evt-player"
+              className="hs-input"
+              value={playerId}
+              onChange={(e) => setPlayerId(e.target.value)}
+            >
+              <option value="">Select player…</option>
+              {roster.map((p) => (
+                <option key={p.id} value={p.id}>
+                  #{p.number} {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <AnimatePresence initial={false}>

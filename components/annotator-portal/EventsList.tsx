@@ -75,7 +75,7 @@ export default function EventsList({
           <p className="py-6 text-center text-sm text-text-faint">No events tagged yet.</p>
         )}
         {filtered.map((evt) => {
-          const player = findPlayer(project, evt.teamSide, evt.playerId);
+          const player = evt.teamSide && evt.playerId ? findPlayer(project, evt.teamSide, evt.playerId) : undefined;
           const isShot = SHOT_EVENT_TYPES.includes(evt.eventType);
           return (
             <div key={evt.id} className="flex items-center justify-between gap-3 py-3 first:pt-0">
@@ -96,13 +96,13 @@ export default function EventsList({
                 </span>
                 <div className="min-w-0">
                   <p className="truncate text-sm text-text">
-                    {player ? `#${player.number} ${player.name}` : "Unknown player"}{" "}
-                    <span className="text-text-faint">
-                      · {evt.teamSide === "team" ? "Team" : "Opp"}
-                    </span>
+                    {evt.teamSide ? (player ? `#${player.number} ${player.name}` : "Unknown player") : EVENT_TYPE_LABELS[evt.eventType]}
+                    {evt.teamSide && (
+                      <span className="text-text-faint"> · {evt.teamSide === "team" ? "Team" : "Opp"}</span>
+                    )}
                   </p>
                   <p className="mt-0.5 text-xs text-text-faint">
-                    {EVENT_TYPE_LABELS[evt.eventType]}
+                    {evt.teamSide ? EVENT_TYPE_LABELS[evt.eventType] : "Game event"}
                     {isShot && (
                       <span className={evt.made ? "ml-1.5 text-orange-bright" : "ml-1.5 text-text-faint"}>
                         · {evt.made ? "MADE" : "MISSED"}

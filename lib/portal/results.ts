@@ -63,14 +63,17 @@ function computeClips(project: Project, events: AnnotationEvent[]): TaggedClip[]
   return [...events]
     .sort((a, b) => a.timestampSeconds - b.timestampSeconds)
     .map((e) => {
-      const player = findPlayer(e.teamSide, e.playerId);
+      const player = e.teamSide && e.playerId ? findPlayer(e.teamSide, e.playerId) : undefined;
       const base = e.eventType === "custom" && e.customLabel ? e.customLabel : EVENT_TYPE_LABELS[e.eventType];
       const label = SHOT_EVENT_TYPES.includes(e.eventType) ? `${base} (${e.made ? "MADE" : "MISSED"})` : base;
       return {
         id: e.id,
         label,
         time: formatClipTime(e.timestampSeconds),
-        player: player ? `#${player.number} ${player.name}` : "Unknown player",
+        // Timeout (the only teamless/playerless event type) has no
+        // player to attribute — "Team event" reads better than the
+        // "Unknown player" wording meant for an actual lookup miss.
+        player: e.teamSide ? (player ? `#${player.number} ${player.name}` : "Unknown player") : "Team event",
         confidence: 100,
         verified: true,
       };
