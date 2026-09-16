@@ -15,6 +15,7 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
+import { periodForTimestamp, type VideoSegment } from "./segments";
 
 export type EventType =
   | "two_point"
@@ -113,7 +114,7 @@ type EventRow = {
   shot_y: number | null;
   custom_label: string | null;
   game_clock_seconds: number | null;
-  period: number | null;
+  period: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -130,7 +131,7 @@ function mapEventRow(row: EventRow): AnnotationEvent {
     shotLocation: row.shot_x != null && row.shot_y != null ? { x: row.shot_x, y: row.shot_y } : undefined,
     customLabel: row.custom_label ?? undefined,
     gameClockSeconds: row.game_clock_seconds ?? undefined,
-    period: row.period != null ? String(row.period) : undefined,
+    period: row.period ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -168,7 +169,7 @@ function inputToRow(projectId: string, input: NewEventInput) {
     shot_y: input.shotLocation?.y ?? null,
     custom_label: input.customLabel ?? null,
     game_clock_seconds: input.gameClockSeconds ?? null,
-    period: input.period != null ? Number(input.period) : null,
+    period: input.period ?? null,
   };
 }
 
@@ -212,7 +213,7 @@ export async function updateEvent(
   }
   if ("customLabel" in patch) updates.custom_label = patch.customLabel ?? null;
   if ("gameClockSeconds" in patch) updates.game_clock_seconds = patch.gameClockSeconds ?? null;
-  if ("period" in patch) updates.period = patch.period != null ? Number(patch.period) : null;
+  if ("period" in patch) updates.period = patch.period ?? null;
 
   const { data, error } = await supabase
     .from("annotation_events")
@@ -289,4 +290,54 @@ export function computeLiveStats(events: AnnotationEvent[], teamSide: TeamSide):
   }
 
   return Array.from(byPlayer.values());
+}
+
+/** playerId -> total seconds played, across all periods. Uses each
+ * substitution event's own gameClockSeconds (not video timestamp) so
+ * dead-ball stoppage time while the clock is paused is never counted —
+ * a sub tagged the instant the clock is paused and a sub tagged the
+ * instant it resumes read the same gameClockSeconds, so no time leaks
+ * in or out around a stoppage.
+ * A player still "in" when a period's events run out is closed out at
+ * that period's buzzer (game clock 0:00), covering the common case of
+ * playing the rest of the period with no explicit closing sub. */
+export function computePlayingTimeSeconds(
+  events: AnnotationEvent[],
+  segments: VideoSegment[],
+  teamSide: TeamSide
+): Map<string, number> {
+  const totals = new Map<string, number>();
+  const byPeriod = new Map<string, AnnotationEvent[]>();
+  for (const seg of segments) byPeriod.set(seg.label, []);
+
+  for (const evt of events) {
+    if (evt.teamSide !== teamSide || !evt.playerId) continue;
+    if (evt.eventType !== "substitution_in" && evt.eventType !== "substitution_out") continue;
+    const label = periodForTimestamp(segments, evt.timestampSeconds);
+    if (label) byPeriod.get(label)?.push(evt);
+  }
+
+  for (const seg of segments) {
+    const periodEvents = (byPeriod.get(seg.label) ?? [])
+      .slice()
+      .sort((a, b) => a.timestampSeconds - b.timestampSeconds);
+    const enteredAt = new Map<string, number>();
+    for (const evt of periodEvents) {
+      if (evt.gameClockSeconds == null || !evt.playerId) continue;
+      if (evt.eventType === "substitution_in") {
+        enteredAt.set(evt.playerId, evt.gameClockSeconds);
+      } else {
+        const start = enteredAt.get(evt.playerId);
+        if (start != null) {
+          totals.set(evt.playerId, (totals.get(evt.playerId) ?? 0) + Math.max(0, start - evt.gameClockSeconds));
+          enteredAt.delete(evt.playerId);
+        }
+      }
+    }
+    for (const [playerId, start] of enteredAt) {
+      totals.set(playerId, (totals.get(playerId) ?? 0) + Math.max(0, start));
+    }
+  }
+
+  return totals;
 }

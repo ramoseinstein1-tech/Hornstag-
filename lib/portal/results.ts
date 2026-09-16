@@ -15,9 +15,11 @@ import {
   EVENT_TYPE_LABELS,
   SHOT_EVENT_TYPES,
   pointsForEvent,
+  computePlayingTimeSeconds,
   type AnnotationEvent,
   type TeamSide,
 } from "./events";
+import { getSegments, type VideoSegment } from "./segments";
 import type { Project, RosterPlayer, PlayerBoxScore, TaggedClip, ProjectResults } from "./store";
 
 function formatClipTime(seconds: number): string {
@@ -32,8 +34,10 @@ function formatClipTime(seconds: number): string {
 function computeBoxScoreForSide(
   roster: RosterPlayer[],
   events: AnnotationEvent[],
+  segments: VideoSegment[],
   teamSide: TeamSide
 ): PlayerBoxScore[] {
+  const playingTime = computePlayingTimeSeconds(events, segments, teamSide);
   return roster.map((p) => {
     const own = events.filter((e) => e.teamSide === teamSide && e.playerId === p.id);
     const shots = own.filter((e) => e.eventType === "two_point" || e.eventType === "three_point");
@@ -52,6 +56,7 @@ function computeBoxScoreForSide(
       fgm: shots.filter((e) => e.made).length,
       tpa: threes.length,
       tpm: threes.filter((e) => e.made).length,
+      minSeconds: playingTime.get(p.id) ?? 0,
     };
   });
 }
@@ -83,11 +88,11 @@ function computeClips(project: Project, events: AnnotationEvent[]): TaggedClip[]
 /** Real, annotator-tagged results for a project — used once a project is
  * "Completed" and has actual tagged events behind it. */
 export async function computeRealResults(project: Project): Promise<ProjectResults> {
-  const events = await getEvents(project.id);
-  const team = computeBoxScoreForSide(project.roster, events, "team");
+  const [events, segments] = await Promise.all([getEvents(project.id), getSegments(project.id)]);
+  const team = computeBoxScoreForSide(project.roster, events, segments ?? [], "team");
   const opponent =
     project.opponentRoster && project.opponentRoster.length > 0
-      ? computeBoxScoreForSide(project.opponentRoster, events, "opponent")
+      ? computeBoxScoreForSide(project.opponentRoster, events, segments ?? [], "opponent")
       : undefined;
   return { team, opponent, clips: computeClips(project, events) };
 }

@@ -451,7 +451,7 @@ export default function AnnotationWorkspace({
 
       {tab === "stats" && (
         <div className="mt-6">
-          <LiveStatsPanel project={currentProject} events={events} />
+          <LiveStatsPanel project={currentProject} events={events} segments={segments} />
         </div>
       )}
 

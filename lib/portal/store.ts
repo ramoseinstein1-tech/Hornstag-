@@ -501,6 +501,7 @@ export type PlayerBoxScore = {
   fga: number;
   tpm: number;
   tpa: number;
+  minSeconds: number;
 };
 
 export type TaggedClip = {
@@ -552,6 +553,7 @@ function genPlayerStats(p: RosterPlayer, rand: () => number): PlayerBoxScore {
     fga,
     tpm,
     tpa,
+    minSeconds: Math.floor((4 + rand() * 28) * 60),
   };
 }
 

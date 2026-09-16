@@ -289,7 +289,7 @@ export default function AdminProjectReviewPage({
       </div>
 
       <div className="mt-8">
-        <LiveStatsPanel project={project} events={events} />
+        <LiveStatsPanel project={project} events={events} segments={segments} />
       </div>
 
       {user && (

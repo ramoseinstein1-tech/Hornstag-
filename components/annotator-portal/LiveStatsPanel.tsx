@@ -1,7 +1,8 @@
 "use client";
 
 import type { Project, RosterPlayer } from "@/lib/portal/store";
-import { computeLiveStats, type AnnotationEvent, type TeamSide } from "@/lib/portal/events";
+import { computeLiveStats, computePlayingTimeSeconds, type AnnotationEvent, type TeamSide } from "@/lib/portal/events";
+import { formatClockMMSS, type VideoSegment } from "@/lib/portal/segments";
 
 const COLUMNS: { key: "pts" | "reb" | "ast" | "stl" | "blk" | "tov" | "pf"; label: string }[] = [
   { key: "pts", label: "PTS" },
@@ -13,9 +14,22 @@ const COLUMNS: { key: "pts" | "reb" | "ast" | "stl" | "blk" | "tov" | "pf"; labe
   { key: "pf", label: "PF" },
 ];
 
-function TeamTable({ label, roster, events, teamSide }: { label: string; roster: RosterPlayer[]; events: AnnotationEvent[]; teamSide: TeamSide }) {
+function TeamTable({
+  label,
+  roster,
+  events,
+  segments,
+  teamSide,
+}: {
+  label: string;
+  roster: RosterPlayer[];
+  events: AnnotationEvent[];
+  segments: VideoSegment[] | null;
+  teamSide: TeamSide;
+}) {
   const stats = computeLiveStats(events, teamSide);
   const byPlayer = new Map(stats.map((s) => [s.playerId, s]));
+  const playingTime = computePlayingTimeSeconds(events, segments ?? [], teamSide);
   const totals = COLUMNS.reduce<Record<string, number>>((acc, col) => {
     acc[col.key] = stats.reduce((sum, s) => sum + s[col.key], 0);
     return acc;
@@ -32,6 +46,7 @@ function TeamTable({ label, roster, events, teamSide }: { label: string; roster:
           <thead>
             <tr className="border-b border-border text-left">
               <th className="px-5 py-2.5 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">PLAYER</th>
+              <th className="px-3 py-2.5 text-center font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">MIN</th>
               {COLUMNS.map((c) => (
                 <th key={c.key} className="px-3 py-2.5 text-center font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">
                   {c.label}
@@ -42,7 +57,7 @@ function TeamTable({ label, roster, events, teamSide }: { label: string; roster:
           <tbody>
             {roster.length === 0 && (
               <tr>
-                <td colSpan={COLUMNS.length + 1} className="px-5 py-6 text-center text-text-faint">
+                <td colSpan={COLUMNS.length + 2} className="px-5 py-6 text-center text-text-faint">
                   No roster yet.
                 </td>
               </tr>
@@ -53,6 +68,9 @@ function TeamTable({ label, roster, events, teamSide }: { label: string; roster:
                 <tr key={p.id} className="border-b border-border/60 last:border-0">
                   <td className="whitespace-nowrap px-5 py-2.5 text-text">
                     #{p.number} {p.name}
+                  </td>
+                  <td className="px-3 py-2.5 text-center tabular-nums text-text-muted">
+                    {formatClockMMSS(playingTime.get(p.id) ?? 0)}
                   </td>
                   {COLUMNS.map((c) => (
                     <td key={c.key} className="px-3 py-2.5 text-center tabular-nums text-text-muted">
@@ -69,12 +87,26 @@ function TeamTable({ label, roster, events, teamSide }: { label: string; roster:
   );
 }
 
-export default function LiveStatsPanel({ project, events }: { project: Project; events: AnnotationEvent[] }) {
+export default function LiveStatsPanel({
+  project,
+  events,
+  segments,
+}: {
+  project: Project;
+  events: AnnotationEvent[];
+  segments: VideoSegment[] | null;
+}) {
   return (
     <div className="flex flex-col gap-6">
-      <TeamTable label="MY TEAM — LIVE" roster={project.roster} events={events} teamSide="team" />
+      <TeamTable label="MY TEAM — LIVE" roster={project.roster} events={events} segments={segments} teamSide="team" />
       {project.scope === "Both Teams" && (
-        <TeamTable label="OPPOSITION — LIVE" roster={project.opponentRoster ?? []} events={events} teamSide="opponent" />
+        <TeamTable
+          label="OPPOSITION — LIVE"
+          roster={project.opponentRoster ?? []}
+          events={events}
+          segments={segments}
+          teamSide="opponent"
+        />
       )}
     </div>
   );

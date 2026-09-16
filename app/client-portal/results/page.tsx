@@ -13,7 +13,7 @@ import {
 import type { Project, PlayerBoxScore, ProjectResults, TaggedClip, ProjectStatus } from "@/lib/portal/store";
 import { officialOutcome } from "@/lib/portal/store";
 import { computeRealResults, hasRealAnnotationData } from "@/lib/portal/results";
-import { getSegments, getSegmentClipUrl, type VideoSegment } from "@/lib/portal/segments";
+import { getSegments, getSegmentClipUrl, formatClockMMSS, type VideoSegment } from "@/lib/portal/segments";
 import { getVideoIssues, ISSUE_TYPE_LABELS, type VideoIssue } from "@/lib/portal/videoIssues";
 
 function StatTile({ label, value }: { label: string; value: string | number }) {
@@ -37,7 +37,7 @@ function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxSc
         <table className="w-full min-w-[560px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border text-left">
-              {["PLAYER", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "3P"].map((h) => (
+              {["PLAYER", "MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "3P"].map((h) => (
                 <th
                   key={h}
                   className="pb-2 pr-4 font-mono-tech text-[0.6rem] tracking-[0.1em] text-text-faint"
@@ -53,6 +53,7 @@ function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxSc
                 <td className="py-2.5 pr-4 text-text">
                   #{p.number} {p.name}
                 </td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{formatClockMMSS(p.minSeconds)}</td>
                 <td className="py-2.5 pr-4 font-mono-tech text-orange-bright">{p.pts}</td>
                 <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.reb}</td>
                 <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.ast}</td>
@@ -292,6 +293,7 @@ export default function ResultsPage() {
         rows.push([
           label,
           `#${p.number} ${p.name}`,
+          formatClockMMSS(p.minSeconds),
           p.pts,
           p.reb,
           p.ast,
@@ -307,7 +309,7 @@ export default function ResultsPage() {
     if (results.opponent) addRows(selected.opponent ?? "OPPONENT", results.opponent);
 
     const csv = toCsv(
-      ["TEAM", "PLAYER", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "3P"],
+      ["TEAM", "PLAYER", "MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "3P"],
       rows
     );
     downloadCsv(`${selected.name.replace(/[^\w-]+/g, "_")}_box_score.csv`, csv);
