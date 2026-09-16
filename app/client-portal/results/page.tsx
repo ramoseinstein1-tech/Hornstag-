@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
@@ -15,6 +15,15 @@ import { officialOutcome } from "@/lib/portal/store";
 import { computeRealResults, hasRealAnnotationData } from "@/lib/portal/results";
 import { getSegments, getSegmentClipUrl, formatClockMMSS, type VideoSegment } from "@/lib/portal/segments";
 import { getVideoIssues, ISSUE_TYPE_LABELS, type VideoIssue } from "@/lib/portal/videoIssues";
+import ShotChart from "@/components/client-portal/ShotChart";
+
+function fgPctOf(m: number, a: number): number {
+  return a > 0 ? Math.round((m / a) * 100) : 0;
+}
+
+function formatPlusMinus(n: number): string {
+  return n > 0 ? `+${n}` : String(n);
+}
 
 function StatTile({ label, value }: { label: string; value: string | number }) {
   return (
@@ -28,16 +37,19 @@ function StatTile({ label, value }: { label: string; value: string | number }) {
 }
 
 function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxScore[] }) {
+  const totals = teamTotals(players);
+  const totalMinSeconds = players.reduce((sum, p) => sum + p.minSeconds, 0);
+
   return (
     <div className="hs-panel sheen-top p-5">
       <h3 className="mb-4 font-mono-tech text-[0.64rem] tracking-[0.18em] text-text-soft">
         {title}
       </h3>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] border-collapse text-sm">
+        <table className="w-full min-w-[720px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border text-left">
-              {["PLAYER", "MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "3P"].map((h) => (
+              {["PLAYER", "MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "FG%", "3P", "3P%", "+/-"].map((h) => (
                 <th
                   key={h}
                   className="pb-2 pr-4 font-mono-tech text-[0.6rem] tracking-[0.1em] text-text-faint"
@@ -63,25 +75,85 @@ function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxSc
                 <td className="py-2.5 pr-4 font-mono-tech text-text-muted">
                   {p.fgm}/{p.fga}
                 </td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{fgPctOf(p.fgm, p.fga)}%</td>
                 <td className="py-2.5 pr-4 font-mono-tech text-text-muted">
                   {p.tpm}/{p.tpa}
+                </td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{fgPctOf(p.tpm, p.tpa)}%</td>
+                <td className={`py-2.5 pr-4 font-mono-tech ${p.plusMinus > 0 ? "text-[#7cd48a]" : p.plusMinus < 0 ? "text-[#ff9b9b]" : "text-text-muted"}`}>
+                  {formatPlusMinus(p.plusMinus)}
                 </td>
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t border-border text-left">
+              <td className="pt-2.5 pr-4 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">TOTAL</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{formatClockMMSS(totalMinSeconds)}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-orange-bright">{totals.pts}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.reb}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.ast}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.stl}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.blk}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.tov}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">
+                {totals.fgm}/{totals.fga}
+              </td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.fgPct}%</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">
+                {totals.tpm}/{totals.tpa}
+              </td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.tpPct}%</td>
+              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">—</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>
   );
 }
 
-function ClipCard({ clip }: { clip: TaggedClip }) {
+// A short preview rather than a precise cut, same "acceptable slack"
+// tradeoff already used for the fast, keyframe-based period cutting
+// (lib/portal/videoClips.ts) — this just seeks + auto-pauses, no new
+// video file involved.
+const CLIP_PREVIEW_SECONDS = 6;
+
+function ClipCard({ projectId, clip }: { projectId: string; clip: TaggedClip }) {
   const [open, setOpen] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const pauseTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  async function handleToggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && clip.clipPath && !videoUrl && !loading) {
+      setLoading(true);
+      const signed = await getSegmentClipUrl(projectId, clip.clipPath);
+      setLoading(false);
+      setVideoUrl(signed);
+    }
+    if (!next && pauseTimeout.current) {
+      clearTimeout(pauseTimeout.current);
+    }
+  }
+
+  function handleLoadedMetadata() {
+    const video = videoRef.current;
+    if (!video || clip.clipOffsetSeconds == null) return;
+    video.currentTime = clip.clipOffsetSeconds;
+    video.play().catch(() => {});
+    pauseTimeout.current = setTimeout(() => video.pause(), CLIP_PREVIEW_SECONDS * 1000);
+  }
 
   return (
-    <button
-      type="button"
-      onClick={() => setOpen((v) => !v)}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleToggle}
+      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleToggle()}
       aria-expanded={open}
       className="hs-panel sheen-top hs-panel-hover flex flex-col overflow-hidden text-left"
     >
@@ -93,7 +165,7 @@ function ClipCard({ clip }: { clip: TaggedClip }) {
         }}
       >
         <span className="flex h-10 w-10 items-center justify-center rounded-full border border-orange/40 bg-background/60 text-orange-bright">
-          ▶
+          {loading ? "…" : "▶"}
         </span>
         <span className="absolute bottom-2 right-2 font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint">
           {clip.time}
@@ -115,15 +187,25 @@ function ClipCard({ clip }: { clip: TaggedClip }) {
             {clip.confidence}% CONFIDENCE
           </p>
         )}
-        {open && (
+        {open && clip.clipPath && videoUrl && (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            controls
+            onLoadedMetadata={handleLoadedMetadata}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-2 w-full rounded border border-border"
+          />
+        )}
+        {open && !clip.clipPath && (
           <p className="mt-2 border-t border-border pt-2 text-[0.68rem] leading-relaxed text-text-faint">
-            Clip playback isn&rsquo;t available in this demo — in production
-            this would stream the tagged segment directly from your
-            uploaded film.
+            No clip available for this event — its period hasn&rsquo;t been
+            cut yet, or this event predates video segmentation.
           </p>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -285,8 +367,10 @@ export default function ResultsPage() {
     [results]
   );
 
-  function handleDownloadBoxScore() {
-    if (!selected || !results) return;
+  const BOX_SCORE_HEADERS = ["TEAM", "PLAYER", "MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "FG%", "3P", "3P%", "+/-"];
+
+  function boxScoreRows(): (string | number)[][] {
+    if (!selected || !results) return [];
     const rows: (string | number)[][] = [];
     const addRows = (label: string, players: PlayerBoxScore[]) => {
       players.forEach((p) =>
@@ -301,25 +385,83 @@ export default function ResultsPage() {
           p.blk,
           p.tov,
           `${p.fgm}/${p.fga}`,
+          `${fgPctOf(p.fgm, p.fga)}%`,
           `${p.tpm}/${p.tpa}`,
+          `${fgPctOf(p.tpm, p.tpa)}%`,
+          formatPlusMinus(p.plusMinus),
         ])
       );
     };
     addRows(selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM", results.team);
     if (results.opponent) addRows(selected.opponent ?? "OPPONENT", results.opponent);
+    return rows;
+  }
 
-    const csv = toCsv(
-      ["TEAM", "PLAYER", "MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG", "3P"],
-      rows
-    );
+  const EVENT_LOG_HEADERS = ["TIME", "EVENT", "PLAYER", "CONFIDENCE"];
+
+  function eventLogRows(): (string | number)[][] {
+    if (!results) return [];
+    return results.clips.map((c) => [c.time, c.label, c.player, `${c.confidence}%`]);
+  }
+
+  const TEAM_STATS_HEADERS = ["TEAM", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG%", "3P%"];
+
+  function teamStatsRows(): (string | number)[][] {
+    if (!selected || !results || !yourTotals) return [];
+    const rows: (string | number)[][] = [
+      [
+        selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM",
+        yourTotals.pts,
+        yourTotals.reb,
+        yourTotals.ast,
+        yourTotals.stl,
+        yourTotals.blk,
+        yourTotals.tov,
+        `${yourTotals.fgPct}%`,
+        `${yourTotals.tpPct}%`,
+      ],
+    ];
+    if (oppTotals) {
+      rows.push([
+        selected.opponent ?? "OPPONENT",
+        oppTotals.pts,
+        oppTotals.reb,
+        oppTotals.ast,
+        oppTotals.stl,
+        oppTotals.blk,
+        oppTotals.tov,
+        `${oppTotals.fgPct}%`,
+        `${oppTotals.tpPct}%`,
+      ]);
+    }
+    return rows;
+  }
+
+  function handleDownloadBoxScore() {
+    if (!selected) return;
+    const csv = toCsv(BOX_SCORE_HEADERS, boxScoreRows());
     downloadCsv(`${selected.name.replace(/[^\w-]+/g, "_")}_box_score.csv`, csv);
   }
 
   function handleDownloadEventLog() {
-    if (!selected || !results) return;
-    const rows = results.clips.map((c) => [c.time, c.label, c.player, `${c.confidence}%`]);
-    const csv = toCsv(["TIME", "EVENT", "PLAYER", "CONFIDENCE"], rows);
+    if (!selected) return;
+    const csv = toCsv(EVENT_LOG_HEADERS, eventLogRows());
     downloadCsv(`${selected.name.replace(/[^\w-]+/g, "_")}_event_log.csv`, csv);
+  }
+
+  function handleDownloadFullReport() {
+    if (!selected) return;
+    const csv = [
+      "TEAM STATS",
+      toCsv(TEAM_STATS_HEADERS, teamStatsRows()),
+      "",
+      "BOX SCORE",
+      toCsv(BOX_SCORE_HEADERS, boxScoreRows()),
+      "",
+      "EVENT LOG",
+      toCsv(EVENT_LOG_HEADERS, eventLogRows()),
+    ].join("\n");
+    downloadCsv(`${selected.name.replace(/[^\w-]+/g, "_")}_full_report.csv`, csv);
   }
 
   if (allProjects.length === 0) {
@@ -472,6 +614,28 @@ export default function ResultsPage() {
             )}
           </div>
 
+          <div className="mt-10">
+            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+              SHOT CHART
+            </h2>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div>
+                <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.14em] text-orange-bright">
+                  {selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
+                </p>
+                <ShotChart shots={results.teamShots} />
+              </div>
+              {results.opponentShots && (
+                <div>
+                  <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.14em] text-text-muted">
+                    {selected.opponent ?? "OPPONENT"}
+                  </p>
+                  <ShotChart shots={results.opponentShots} />
+                </div>
+              )}
+            </div>
+          </div>
+
           {periodClips.length > 0 && (
             <div className="mt-10">
               <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
@@ -491,7 +655,7 @@ export default function ResultsPage() {
             </h2>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {results.clips.map((c) => (
-                <ClipCard key={c.id} clip={c} />
+                <ClipCard key={c.id} projectId={selected.id} clip={c} />
               ))}
             </div>
           </div>
@@ -506,6 +670,9 @@ export default function ResultsPage() {
               </button>
               <button onClick={handleDownloadEventLog} className="hs-btn-secondary">
                 DOWNLOAD EVENT LOG (CSV)
+              </button>
+              <button onClick={handleDownloadFullReport} className="hs-btn-secondary">
+                DOWNLOAD FULL REPORT (CSV)
               </button>
             </div>
           </div>

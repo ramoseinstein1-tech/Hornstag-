@@ -502,6 +502,7 @@ export type PlayerBoxScore = {
   tpm: number;
   tpa: number;
   minSeconds: number;
+  plusMinus: number;
 };
 
 export type TaggedClip = {
@@ -511,12 +512,21 @@ export type TaggedClip = {
   player: string;
   confidence: number;
   verified?: boolean;
+  /** Set only when this event's period was cut into a real clip (Phase 3)
+   * — the client Results page seeks into that clip rather than showing
+   * the "not available" placeholder. */
+  clipPath?: string;
+  clipOffsetSeconds?: number;
 };
+
+export type ShotChartPoint = { x: number; y: number; made: boolean };
 
 export type ProjectResults = {
   team: PlayerBoxScore[];
   opponent?: PlayerBoxScore[];
   clips: TaggedClip[];
+  teamShots: ShotChartPoint[];
+  opponentShots?: ShotChartPoint[];
 };
 
 function seededRandom(seed: string) {
@@ -554,6 +564,7 @@ function genPlayerStats(p: RosterPlayer, rand: () => number): PlayerBoxScore {
     tpm,
     tpa,
     minSeconds: Math.floor((4 + rand() * 28) * 60),
+    plusMinus: Math.round((rand() - 0.5) * 30),
   };
 }
 
@@ -584,6 +595,20 @@ function genClips(project: Project, rand: () => number): TaggedClip[] {
   return clips;
 }
 
+function genShots(rand: () => number): ShotChartPoint[] {
+  const count = 8 + Math.floor(rand() * 10);
+  const shots: ShotChartPoint[] = [];
+  for (let i = 0; i < count; i++) {
+    // Biased toward one basket's key/three-point area rather than
+    // uniform-random, so the fabricated chart looks plausible.
+    const nearLeft = rand() < 0.5;
+    const x = nearLeft ? rand() * 0.35 : 0.65 + rand() * 0.35;
+    const y = 0.15 + rand() * 0.7;
+    shots.push({ x, y, made: rand() < 0.45 });
+  }
+  return shots;
+}
+
 export function getProjectResults(project: Project): ProjectResults {
   const rand = seededRandom(project.id);
   const team = project.roster.map((p) => genPlayerStats(p, rand));
@@ -592,7 +617,9 @@ export function getProjectResults(project: Project): ProjectResults {
       ? project.opponentRoster.map((p) => genPlayerStats(p, rand))
       : undefined;
   const clips = genClips(project, rand);
-  return { team, opponent, clips };
+  const teamShots = genShots(rand);
+  const opponentShots = opponent ? genShots(rand) : undefined;
+  return { team, opponent, clips, teamShots, opponentShots };
 }
 
 export function teamTotals(players: PlayerBoxScore[]) {

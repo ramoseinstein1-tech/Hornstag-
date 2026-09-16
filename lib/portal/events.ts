@@ -292,21 +292,16 @@ export function computeLiveStats(events: AnnotationEvent[], teamSide: TeamSide):
   return Array.from(byPlayer.values());
 }
 
-/** playerId -> total seconds played, across all periods. Uses each
- * substitution event's own gameClockSeconds (not video timestamp) so
- * dead-ball stoppage time while the clock is paused is never counted —
- * a sub tagged the instant the clock is paused and a sub tagged the
- * instant it resumes read the same gameClockSeconds, so no time leaks
- * in or out around a stoppage.
- * A player still "in" when a period's events run out is closed out at
- * that period's buzzer (game clock 0:00), covering the common case of
- * playing the rest of the period with no explicit closing sub. */
-export function computePlayingTimeSeconds(
-  events: AnnotationEvent[],
-  segments: VideoSegment[],
-  teamSide: TeamSide
-): Map<string, number> {
-  const totals = new Map<string, number>();
+type Stint = { period: string; enterClock: number; exitClock: number };
+
+/** Per-player on-court stints (one per continuous sub-in/sub-out pairing),
+ * keyed by gameClockSeconds so downstream consumers never need video time.
+ * Shared by computePlayingTimeSeconds (sums stint durations) and
+ * computePlusMinus (checks whether a given moment falls inside a stint) —
+ * both need the exact same sub-in/sub-out pairing and buzzer-close-out
+ * rules, so it lives in one place. */
+function buildPlayerStints(events: AnnotationEvent[], segments: VideoSegment[], teamSide: TeamSide): Map<string, Stint[]> {
+  const stintsByPlayer = new Map<string, Stint[]>();
   const byPeriod = new Map<string, AnnotationEvent[]>();
   for (const seg of segments) byPeriod.set(seg.label, []);
 
@@ -329,13 +324,72 @@ export function computePlayingTimeSeconds(
       } else {
         const start = enteredAt.get(evt.playerId);
         if (start != null) {
-          totals.set(evt.playerId, (totals.get(evt.playerId) ?? 0) + Math.max(0, start - evt.gameClockSeconds));
+          const list = stintsByPlayer.get(evt.playerId) ?? [];
+          list.push({ period: seg.label, enterClock: start, exitClock: evt.gameClockSeconds });
+          stintsByPlayer.set(evt.playerId, list);
           enteredAt.delete(evt.playerId);
         }
       }
     }
+    // Anyone still "in" when a period's events run out played the rest of
+    // it — close them out at the buzzer (game clock 0:00).
     for (const [playerId, start] of enteredAt) {
-      totals.set(playerId, (totals.get(playerId) ?? 0) + Math.max(0, start));
+      const list = stintsByPlayer.get(playerId) ?? [];
+      list.push({ period: seg.label, enterClock: start, exitClock: 0 });
+      stintsByPlayer.set(playerId, list);
+    }
+  }
+
+  return stintsByPlayer;
+}
+
+/** playerId -> total seconds played, across all periods. Uses each
+ * substitution event's own gameClockSeconds (not video timestamp) so
+ * dead-ball stoppage time while the clock is paused is never counted —
+ * a sub tagged the instant the clock is paused and a sub tagged the
+ * instant it resumes read the same gameClockSeconds, so no time leaks
+ * in or out around a stoppage.
+ * A player still "in" when a period's events run out is closed out at
+ * that period's buzzer (game clock 0:00), covering the common case of
+ * playing the rest of the period with no explicit closing sub. */
+export function computePlayingTimeSeconds(
+  events: AnnotationEvent[],
+  segments: VideoSegment[],
+  teamSide: TeamSide
+): Map<string, number> {
+  const stints = buildPlayerStints(events, segments, teamSide);
+  const totals = new Map<string, number>();
+  for (const [playerId, list] of stints) {
+    totals.set(playerId, list.reduce((sum, s) => sum + Math.max(0, s.enterClock - s.exitClock), 0));
+  }
+  return totals;
+}
+
+/** Standard plus/minus: for a player on `teamSide`, the point differential
+ * of their own team vs. the opponent across every scoring play that
+ * happened while they were on the court. Only needs this player's own
+ * team's stints — plus/minus never has to know who was on court for the
+ * other side, just whether this player was on the floor when any score
+ * happened, by either team. */
+export function computePlusMinus(
+  events: AnnotationEvent[],
+  segments: VideoSegment[],
+  teamSide: TeamSide
+): Map<string, number> {
+  const stints = buildPlayerStints(events, segments, teamSide);
+  const totals = new Map<string, number>();
+
+  for (const evt of events) {
+    const pts = pointsForEvent(evt);
+    if (pts === 0 || !evt.teamSide || evt.gameClockSeconds == null) continue;
+    const period = periodForTimestamp(segments, evt.timestampSeconds);
+    if (!period) continue;
+    const sign = evt.teamSide === teamSide ? 1 : -1;
+    const clock = evt.gameClockSeconds;
+
+    for (const [playerId, list] of stints) {
+      const onCourt = list.some((s) => s.period === period && clock <= s.enterClock && clock >= s.exitClock);
+      if (onCourt) totals.set(playerId, (totals.get(playerId) ?? 0) + sign * pts);
     }
   }
 

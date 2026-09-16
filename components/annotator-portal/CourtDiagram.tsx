@@ -13,8 +13,8 @@ import type { ShotLocation } from "@/lib/portal/events";
  * accurate no matter what size it's rendered at.
  */
 
-const COURT_W = 940;
-const COURT_H = 500;
+export const COURT_W = 940;
+export const COURT_H = 500;
 const MARGIN = 40;
 const KEY_DEPTH = 150;
 const KEY_HEIGHT = 160;
@@ -46,6 +46,55 @@ function threeArcPath(basketX: number, side: "left" | "right"): string {
     points.push(`${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`);
   }
   return points.join(" ");
+}
+
+/** The static court lines (outer boundary, halfway line, both baskets) —
+ * shared between this interactive picker and the read-only ShotChart
+ * (components/client-portal/ShotChart.tsx) so the geometry isn't
+ * duplicated. Renders a plain fragment of SVG primitives, meant to be
+ * placed directly inside a caller's own <svg viewBox="0 0 COURT_W COURT_H">. */
+export function CourtBackground() {
+  const leftBasketX = MARGIN + 12;
+  const rightBasketX = COURT_W - MARGIN - 12;
+  const leftKeyCx = MARGIN + KEY_DEPTH;
+  const rightKeyCx = COURT_W - MARGIN - KEY_DEPTH;
+
+  return (
+    <>
+      {/* outer boundary */}
+      <rect
+        x={MARGIN}
+        y={MARGIN}
+        width={COURT_W - MARGIN * 2}
+        height={COURT_H - MARGIN * 2}
+        rx={4}
+        fill="none"
+        stroke={LINE}
+        strokeWidth={2}
+      />
+
+      {/* halfway line + center circle */}
+      <line x1={COURT_W / 2} y1={MARGIN} x2={COURT_W / 2} y2={COURT_H - MARGIN} stroke={LINE} strokeWidth={2} />
+      <circle cx={COURT_W / 2} cy={COURT_H / 2} r={CENTER_CIRCLE_R} fill="none" stroke={LINE} strokeWidth={2} />
+      <circle cx={COURT_W / 2} cy={COURT_H / 2} r={4} fill={ACCENT} />
+
+      {/* left basket: key, corner threes + arc, and a full free-throw ring */}
+      <rect x={MARGIN} y={COURT_H / 2 - KEY_HEIGHT / 2} width={KEY_DEPTH} height={KEY_HEIGHT} fill="none" stroke={LINE} strokeWidth={2} />
+      <line x1={MARGIN} y1={CORNER_Y_TOP} x2={leftBasketX + CORNER_DX} y2={CORNER_Y_TOP} stroke={LINE} strokeWidth={2} />
+      <line x1={MARGIN} y1={CORNER_Y_BOTTOM} x2={leftBasketX + CORNER_DX} y2={CORNER_Y_BOTTOM} stroke={LINE} strokeWidth={2} />
+      <path d={threeArcPath(leftBasketX, "left")} fill="none" stroke={LINE} strokeWidth={2} />
+      <circle cx={leftKeyCx} cy={COURT_H / 2} r={FT_CIRCLE_R} fill="none" stroke={LINE} strokeWidth={2} />
+      <line x1={leftBasketX - 4} y1={COURT_H / 2 - 22} x2={leftBasketX - 4} y2={COURT_H / 2 + 22} stroke={ACCENT} strokeWidth={3} strokeLinecap="round" />
+
+      {/* right basket: key, corner threes + arc, and a full free-throw ring */}
+      <rect x={COURT_W - MARGIN - KEY_DEPTH} y={COURT_H / 2 - KEY_HEIGHT / 2} width={KEY_DEPTH} height={KEY_HEIGHT} fill="none" stroke={LINE} strokeWidth={2} />
+      <line x1={COURT_W - MARGIN} y1={CORNER_Y_TOP} x2={rightBasketX - CORNER_DX} y2={CORNER_Y_TOP} stroke={LINE} strokeWidth={2} />
+      <line x1={COURT_W - MARGIN} y1={CORNER_Y_BOTTOM} x2={rightBasketX - CORNER_DX} y2={CORNER_Y_BOTTOM} stroke={LINE} strokeWidth={2} />
+      <path d={threeArcPath(rightBasketX, "right")} fill="none" stroke={LINE} strokeWidth={2} />
+      <circle cx={rightKeyCx} cy={COURT_H / 2} r={FT_CIRCLE_R} fill="none" stroke={LINE} strokeWidth={2} />
+      <line x1={rightBasketX + 4} y1={COURT_H / 2 - 22} x2={rightBasketX + 4} y2={COURT_H / 2 + 22} stroke={ACCENT} strokeWidth={3} strokeLinecap="round" />
+    </>
+  );
 }
 
 export default function CourtDiagram({
@@ -83,11 +132,6 @@ export default function CourtDiagram({
     setDragging(false);
   }
 
-  const leftBasketX = MARGIN + 12;
-  const rightBasketX = COURT_W - MARGIN - 12;
-  const leftKeyCx = MARGIN + KEY_DEPTH;
-  const rightKeyCx = COURT_W - MARGIN - KEY_DEPTH;
-
   return (
     <svg
       ref={svgRef}
@@ -103,38 +147,7 @@ export default function CourtDiagram({
       role="img"
       aria-label="Court diagram — click or drag to set shot location"
     >
-      {/* outer boundary */}
-      <rect
-        x={MARGIN}
-        y={MARGIN}
-        width={COURT_W - MARGIN * 2}
-        height={COURT_H - MARGIN * 2}
-        rx={4}
-        fill="none"
-        stroke={LINE}
-        strokeWidth={2}
-      />
-
-      {/* halfway line + center circle */}
-      <line x1={COURT_W / 2} y1={MARGIN} x2={COURT_W / 2} y2={COURT_H - MARGIN} stroke={LINE} strokeWidth={2} />
-      <circle cx={COURT_W / 2} cy={COURT_H / 2} r={CENTER_CIRCLE_R} fill="none" stroke={LINE} strokeWidth={2} />
-      <circle cx={COURT_W / 2} cy={COURT_H / 2} r={4} fill={ACCENT} />
-
-      {/* left basket: key, corner threes + arc, and a full free-throw ring */}
-      <rect x={MARGIN} y={COURT_H / 2 - KEY_HEIGHT / 2} width={KEY_DEPTH} height={KEY_HEIGHT} fill="none" stroke={LINE} strokeWidth={2} />
-      <line x1={MARGIN} y1={CORNER_Y_TOP} x2={leftBasketX + CORNER_DX} y2={CORNER_Y_TOP} stroke={LINE} strokeWidth={2} />
-      <line x1={MARGIN} y1={CORNER_Y_BOTTOM} x2={leftBasketX + CORNER_DX} y2={CORNER_Y_BOTTOM} stroke={LINE} strokeWidth={2} />
-      <path d={threeArcPath(leftBasketX, "left")} fill="none" stroke={LINE} strokeWidth={2} />
-      <circle cx={leftKeyCx} cy={COURT_H / 2} r={FT_CIRCLE_R} fill="none" stroke={LINE} strokeWidth={2} />
-      <line x1={leftBasketX - 4} y1={COURT_H / 2 - 22} x2={leftBasketX - 4} y2={COURT_H / 2 + 22} stroke={ACCENT} strokeWidth={3} strokeLinecap="round" />
-
-      {/* right basket: key, corner threes + arc, and a full free-throw ring */}
-      <rect x={COURT_W - MARGIN - KEY_DEPTH} y={COURT_H / 2 - KEY_HEIGHT / 2} width={KEY_DEPTH} height={KEY_HEIGHT} fill="none" stroke={LINE} strokeWidth={2} />
-      <line x1={COURT_W - MARGIN} y1={CORNER_Y_TOP} x2={rightBasketX - CORNER_DX} y2={CORNER_Y_TOP} stroke={LINE} strokeWidth={2} />
-      <line x1={COURT_W - MARGIN} y1={CORNER_Y_BOTTOM} x2={rightBasketX - CORNER_DX} y2={CORNER_Y_BOTTOM} stroke={LINE} strokeWidth={2} />
-      <path d={threeArcPath(rightBasketX, "right")} fill="none" stroke={LINE} strokeWidth={2} />
-      <circle cx={rightKeyCx} cy={COURT_H / 2} r={FT_CIRCLE_R} fill="none" stroke={LINE} strokeWidth={2} />
-      <line x1={rightBasketX + 4} y1={COURT_H / 2 - 22} x2={rightBasketX + 4} y2={COURT_H / 2 + 22} stroke={ACCENT} strokeWidth={3} strokeLinecap="round" />
+      <CourtBackground />
 
       {value && (
         <g transform={`translate(${value.x * COURT_W}, ${value.y * COURT_H})`}>

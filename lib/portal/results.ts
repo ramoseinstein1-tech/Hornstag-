@@ -16,11 +16,12 @@ import {
   SHOT_EVENT_TYPES,
   pointsForEvent,
   computePlayingTimeSeconds,
+  computePlusMinus,
   type AnnotationEvent,
   type TeamSide,
 } from "./events";
-import { getSegments, type VideoSegment } from "./segments";
-import type { Project, RosterPlayer, PlayerBoxScore, TaggedClip, ProjectResults } from "./store";
+import { getSegments, periodForTimestamp, type VideoSegment } from "./segments";
+import type { Project, RosterPlayer, PlayerBoxScore, TaggedClip, ShotChartPoint, ProjectResults } from "./store";
 
 function formatClipTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -38,6 +39,7 @@ function computeBoxScoreForSide(
   teamSide: TeamSide
 ): PlayerBoxScore[] {
   const playingTime = computePlayingTimeSeconds(events, segments, teamSide);
+  const plusMinus = computePlusMinus(events, segments, teamSide);
   return roster.map((p) => {
     const own = events.filter((e) => e.teamSide === teamSide && e.playerId === p.id);
     const shots = own.filter((e) => e.eventType === "two_point" || e.eventType === "three_point");
@@ -57,11 +59,22 @@ function computeBoxScoreForSide(
       tpa: threes.length,
       tpm: threes.filter((e) => e.made).length,
       minSeconds: playingTime.get(p.id) ?? 0,
+      plusMinus: plusMinus.get(p.id) ?? 0,
     };
   });
 }
 
-function computeClips(project: Project, events: AnnotationEvent[]): TaggedClip[] {
+/** Every tagged shot's court location for one side — visualized on the
+ * client Results page's shot chart (components/client-portal/ShotChart.tsx).
+ * Events tagged before a shot location existed, or without one for any
+ * other reason, are silently skipped rather than plotted at (0,0). */
+function computeShotChart(events: AnnotationEvent[], teamSide: TeamSide): ShotChartPoint[] {
+  return events
+    .filter((e) => e.teamSide === teamSide && SHOT_EVENT_TYPES.includes(e.eventType) && e.shotLocation)
+    .map((e) => ({ x: e.shotLocation!.x, y: e.shotLocation!.y, made: !!e.made }));
+}
+
+function computeClips(project: Project, events: AnnotationEvent[], segments: VideoSegment[]): TaggedClip[] {
   const findPlayer = (teamSide: TeamSide, playerId: string) =>
     (teamSide === "team" ? project.roster : project.opponentRoster ?? []).find((r) => r.id === playerId);
 
@@ -71,6 +84,13 @@ function computeClips(project: Project, events: AnnotationEvent[]): TaggedClip[]
       const player = e.teamSide && e.playerId ? findPlayer(e.teamSide, e.playerId) : undefined;
       const base = e.eventType === "custom" && e.customLabel ? e.customLabel : EVENT_TYPE_LABELS[e.eventType];
       const label = SHOT_EVENT_TYPES.includes(e.eventType) ? `${base} (${e.made ? "MADE" : "MISSED"})` : base;
+
+      // Falls back to periodForTimestamp for events tagged before the
+      // period column was fixed to actually persist (Phase 9) — without
+      // this, those older events would never get a real clip.
+      const periodLabel = e.period ?? periodForTimestamp(segments, e.timestampSeconds);
+      const seg = periodLabel ? segments.find((s) => s.label === periodLabel) : undefined;
+
       return {
         id: e.id,
         label,
@@ -81,6 +101,8 @@ function computeClips(project: Project, events: AnnotationEvent[]): TaggedClip[]
         player: e.teamSide ? (player ? `#${player.number} ${player.name}` : "Unknown player") : "Team event",
         confidence: 100,
         verified: true,
+        clipPath: seg?.clipPath,
+        clipOffsetSeconds: seg?.clipPath ? e.timestampSeconds - seg.startSeconds : undefined,
       };
     });
 }
@@ -88,13 +110,20 @@ function computeClips(project: Project, events: AnnotationEvent[]): TaggedClip[]
 /** Real, annotator-tagged results for a project — used once a project is
  * "Completed" and has actual tagged events behind it. */
 export async function computeRealResults(project: Project): Promise<ProjectResults> {
-  const [events, segments] = await Promise.all([getEvents(project.id), getSegments(project.id)]);
-  const team = computeBoxScoreForSide(project.roster, events, segments ?? [], "team");
+  const [events, segmentsOrNull] = await Promise.all([getEvents(project.id), getSegments(project.id)]);
+  const segments = segmentsOrNull ?? [];
+  const team = computeBoxScoreForSide(project.roster, events, segments, "team");
   const opponent =
     project.opponentRoster && project.opponentRoster.length > 0
-      ? computeBoxScoreForSide(project.opponentRoster, events, segments ?? [], "opponent")
+      ? computeBoxScoreForSide(project.opponentRoster, events, segments, "opponent")
       : undefined;
-  return { team, opponent, clips: computeClips(project, events) };
+  return {
+    team,
+    opponent,
+    clips: computeClips(project, events, segments),
+    teamShots: computeShotChart(events, "team"),
+    opponentShots: project.opponentRoster && project.opponentRoster.length > 0 ? computeShotChart(events, "opponent") : undefined,
+  };
 }
 
 export async function hasRealAnnotationData(projectId: string): Promise<boolean> {
