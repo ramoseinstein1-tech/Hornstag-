@@ -64,6 +64,10 @@ export type Project = {
   claimedAt?: string;
   submissionNote?: string;
   rejectionReason?: string;
+  /** Admin-entered explanation for an official/tagged score mismatch —
+   * distinct from submissionNote, which is the annotator's own note to
+   * QA. Shown to the client alongside the score check. */
+  scoreCheckNote?: string;
   completedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -100,6 +104,7 @@ type ProjectRow = {
   claimed_at: string | null;
   submission_note: string | null;
   rejection_reason: string | null;
+  score_check_note: string | null;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -142,6 +147,7 @@ function mapProjectRow(row: ProjectRow): Project {
     claimedAt: row.claimed_at ?? undefined,
     submissionNote: row.submission_note ?? undefined,
     rejectionReason: row.rejection_reason ?? undefined,
+    scoreCheckNote: row.score_check_note ?? undefined,
     completedAt: row.completed_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -276,6 +282,14 @@ export async function deleteProject(projectId: string): Promise<{ ok: true } | {
   const data = await res.json();
   if (!res.ok) return { ok: false, error: data.error ?? "Couldn't delete the project." };
   return { ok: true };
+}
+
+/** Admin-only: records why an official/tagged score mismatch exists
+ * (relies on the "admins full access to projects" RLS policy already
+ * in place — no new RPC needed). */
+export async function updateScoreCheckNote(projectId: string, note: string): Promise<void> {
+  const supabase = createClient();
+  await supabase.from("projects").update({ score_check_note: note.trim() || null }).eq("id", projectId);
 }
 
 /** Games this annotator worked on that reached Completed status within

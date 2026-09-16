@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getProject, getProjectVideoUrl, deleteProject, type Project } from "@/lib/portal/store";
+import { getProject, getProjectVideoUrl, deleteProject, updateScoreCheckNote, type Project } from "@/lib/portal/store";
 import { getEvents, pointsForEvent, type AnnotationEvent } from "@/lib/portal/events";
 import { getSegments, type VideoSegment } from "@/lib/portal/segments";
 import { approveAndComplete, sendBackToAnnotator, reopenForReview, rejectProject } from "@/lib/portal/pipeline";
@@ -30,6 +30,8 @@ export default function AdminProjectReviewPage({
   const [showDelete, setShowDelete] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [scoreNoteInput, setScoreNoteInput] = useState("");
+  const [scoreNoteSaved, setScoreNoteSaved] = useState(false);
 
   async function refresh() {
     const [p, evts, segs] = await Promise.all([
@@ -40,6 +42,7 @@ export default function AdminProjectReviewPage({
     setProject(p);
     setEvents(evts);
     setSegments(segs);
+    setScoreNoteInput(p?.scoreCheckNote ?? "");
     if (p) setVideoUrl(await getProjectVideoUrl(p));
   }
 
@@ -47,6 +50,12 @@ export default function AdminProjectReviewPage({
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  async function handleSaveScoreNote() {
+    await updateScoreCheckNote(projectId, scoreNoteInput);
+    setScoreNoteSaved(true);
+    setTimeout(() => setScoreNoteSaved(false), 2500);
+  }
 
   if (project === undefined) return null;
 
@@ -216,6 +225,24 @@ export default function AdminProjectReviewPage({
                   )}
                 </div>
               </div>
+
+              {(!teamScoreMatches || (project.scope === "Both Teams" && !opponentScoreMatches)) && (
+                <div className="mt-4 border-t border-border pt-4">
+                  <label htmlFor="score-note" className="hs-label">
+                    NOTE EXPLAINING THE MISMATCH (SHOWN TO CLIENT)
+                  </label>
+                  <textarea
+                    id="score-note"
+                    className="hs-input min-h-[70px] resize-y"
+                    placeholder="e.g. Annotator confirmed the scoreboard was correct — likely a missed free throw in tagging."
+                    value={scoreNoteInput}
+                    onChange={(e) => setScoreNoteInput(e.target.value)}
+                  />
+                  <button onClick={handleSaveScoreNote} className="hs-btn-secondary mt-2 !px-3 !py-1.5 !text-[0.6rem]">
+                    {scoreNoteSaved ? "SAVED ✓" : "SAVE NOTE"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

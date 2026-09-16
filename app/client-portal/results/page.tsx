@@ -352,6 +352,15 @@ export default function ResultsPage() {
             </div>
           )}
 
+          {selected.scoreCheckNote && (
+            <div className="hs-panel mt-4 p-4" style={{ borderColor: "var(--border-orange)" }}>
+              <p className="mb-1.5 font-mono-tech text-[0.58rem] tracking-[0.14em] text-orange-bright">
+                SCORE CHECK NOTE
+              </p>
+              <p className="text-sm leading-relaxed text-text-muted">{selected.scoreCheckNote}</p>
+            </div>
+          )}
+
           <div className="mt-10">
             <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
               TEAM STATS
