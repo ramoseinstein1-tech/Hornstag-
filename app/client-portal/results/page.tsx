@@ -166,18 +166,25 @@ function PeriodClipCard({ projectId, segment }: { projectId: string; segment: Vi
   );
 }
 
-const PENDING_COPY: Record<Exclude<ProjectStatus, "Completed">, { chip: string; message: (name: string) => string }> = {
+const PENDING_COPY: Record<Exclude<ProjectStatus, "Completed">, { chip: string; message: (project: Project) => string }> = {
   Processing: {
     chip: "PROCESSING",
-    message: (name) => `Annotation hasn't started on "${name}" yet. Check back once processing begins.`,
+    message: (p) => `Annotation hasn't started on "${p.name}" yet. Check back once processing begins.`,
   },
   "In Progress": {
     chip: "IN PROGRESS",
-    message: (name) => `An annotator is actively tagging "${name}". Results appear here once QA approves the submission.`,
+    message: (p) => `An annotator is actively tagging "${p.name}". Results appear here once QA approves the submission.`,
   },
   "Needs Review": {
     chip: "IN QA REVIEW",
-    message: (name) => `"${name}" has been submitted and is awaiting admin QA review before results are released.`,
+    message: (p) => `"${p.name}" has been submitted and is awaiting admin QA review before results are released.`,
+  },
+  Rejected: {
+    chip: "REJECTED",
+    message: (p) =>
+      p.rejectionReason
+        ? `"${p.name}" was rejected and won't be annotated: ${p.rejectionReason}`
+        : `"${p.name}" was rejected and won't be annotated.`,
   },
 };
 
@@ -321,7 +328,7 @@ export default function ResultsPage() {
           style={{ borderStyle: "dashed" }}
         >
           <span className="hs-chip">{PENDING_COPY[selected.status].chip}</span>
-          <p className="max-w-sm text-sm text-text-faint">{PENDING_COPY[selected.status].message(selected.name)}</p>
+          <p className="max-w-sm text-sm text-text-faint">{PENDING_COPY[selected.status].message(selected)}</p>
         </div>
       )}
 

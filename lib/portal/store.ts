@@ -17,10 +17,10 @@
 
 import { createClient } from "@/lib/supabase/client";
 
-export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed";
+export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed" | "Rejected";
 export type AnnotationScope = "Single Team" | "Both Teams";
 export type GameFormat = "Quarters" | "Halves";
-export type AnnotationStatus = "Unclaimed" | "Claimed" | "In Review" | "Completed";
+export type AnnotationStatus = "Unclaimed" | "Claimed" | "In Review" | "Completed" | "Rejected";
 
 export type RosterPlayer = {
   id: string;
@@ -63,6 +63,8 @@ export type Project = {
   claimedByName?: string;
   claimedAt?: string;
   submissionNote?: string;
+  rejectionReason?: string;
+  completedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -97,6 +99,8 @@ type ProjectRow = {
   claimed_by_name: string | null;
   claimed_at: string | null;
   submission_note: string | null;
+  rejection_reason: string | null;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
   roster_players: RosterRow[];
@@ -137,6 +141,8 @@ function mapProjectRow(row: ProjectRow): Project {
     claimedByName: row.claimed_by_name ?? undefined,
     claimedAt: row.claimed_at ?? undefined,
     submissionNote: row.submission_note ?? undefined,
+    rejectionReason: row.rejection_reason ?? undefined,
+    completedAt: row.completed_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -255,6 +261,43 @@ export async function getVisibleProjects(): Promise<Project[]> {
     .order("created_at", { ascending: false });
   if (error || !data) return [];
   return (data as unknown as ProjectRow[]).map(mapProjectRow);
+}
+
+/** Admin-only: permanently deletes a project, its R2 video/clip files,
+ * and (via existing foreign keys) its roster, events, and segments.
+ * See app/api/videos/delete-project/route.ts for the actual admin
+ * verification and R2 cleanup — this is just the client-side call. */
+export async function deleteProject(projectId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch("/api/videos/delete-project", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data.error ?? "Couldn't delete the project." };
+  return { ok: true };
+}
+
+/** Games this annotator worked on that reached Completed status within
+ * the current calendar week — not just any tagging activity. Resets
+ * naturally to 0 each week since it's computed live, not stored. */
+export async function getGamesAnnotatedThisWeek(annotatorId: string): Promise<number> {
+  const supabase = createClient();
+  const weekStart = new Date();
+  const day = weekStart.getDay();
+  // getDay(): 0=Sun..6=Sat — roll back to Monday (ISO week start).
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  weekStart.setDate(weekStart.getDate() - diffToMonday);
+  weekStart.setHours(0, 0, 0, 0);
+
+  const { count } = await supabase
+    .from("projects")
+    .select("id", { count: "exact", head: true })
+    .eq("claimed_by", annotatorId)
+    .eq("annotation_status", "Completed")
+    .gte("completed_at", weekStart.toISOString());
+
+  return count ?? 0;
 }
 
 export async function getActivity(userId: string): Promise<ActivityEntry[]> {

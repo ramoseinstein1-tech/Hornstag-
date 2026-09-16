@@ -66,3 +66,11 @@ export function reopenForReview(projectId: string): Promise<RpcResult> {
 export function unassignAnnotator(projectId: string): Promise<RpcResult> {
   return callRpc("unassign_annotator", { target_project_id: projectId });
 }
+
+/** Admin override: reject a project that's fundamentally unannotatable
+ * (corrupt video, wrong sport, duplicate upload, etc.) — callable at
+ * ANY current status, unlike the transitions above, since this isn't a
+ * normal pipeline step. */
+export function rejectProject(projectId: string, reason: string): Promise<RpcResult> {
+  return callRpc("reject_project", { target_project_id: projectId, reason });
+}

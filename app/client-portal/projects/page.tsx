@@ -21,6 +21,7 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
     "In Progress": "border-orange/40 bg-orange/10 text-orange-bright",
     "Needs Review": "border-border-strong bg-surface-light text-text-soft",
     Completed: "border-border bg-transparent text-text-faint",
+    Rejected: "border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.06] text-[#ff9b9b]",
   };
   const isActive = status === "Processing" || status === "In Progress";
 

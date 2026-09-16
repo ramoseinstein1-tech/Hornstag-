@@ -4,9 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { getVisibleProjects } from "@/lib/portal/store";
+import { getVisibleProjects, getGamesAnnotatedThisWeek } from "@/lib/portal/store";
 import type { Project } from "@/lib/portal/store";
-import { getEvents } from "@/lib/portal/events";
 
 function StatTile({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
   return (
@@ -22,16 +21,12 @@ function StatTile({ label, value, accent }: { label: string; value: string | num
 export default function AnnotatorDashboardPage() {
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [eventsTagged, setEventsTagged] = useState(0);
+  const [gamesThisWeek, setGamesThisWeek] = useState(0);
 
   useEffect(() => {
     if (!user) return;
-    getVisibleProjects().then(async (all) => {
-      setProjects(all);
-      const claimedByMe = all.filter((p) => p.claimedBy === user.id);
-      const counts = await Promise.all(claimedByMe.map((p) => getEvents(p.id)));
-      setEventsTagged(counts.reduce((sum, evts) => sum + evts.length, 0));
-    });
+    getVisibleProjects().then(setProjects);
+    getGamesAnnotatedThisWeek(user.id).then(setGamesThisWeek);
   }, [user]);
 
   if (!user) return null;
@@ -54,7 +49,7 @@ export default function AnnotatorDashboardPage() {
       <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatTile label="UNCLAIMED MATCHES" value={unclaimed.length} />
         <StatTile label="YOUR ACTIVE TASKS" value={inProgress.length} accent />
-        <StatTile label="EVENTS TAGGED" value={eventsTagged} />
+        <StatTile label="GAMES I ANNOTATED THIS WEEK" value={gamesThisWeek} />
       </div>
 
       <motion.div

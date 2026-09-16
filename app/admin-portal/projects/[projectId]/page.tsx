@@ -2,10 +2,11 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { getProject, getProjectVideoUrl, type Project } from "@/lib/portal/store";
+import { useRouter } from "next/navigation";
+import { getProject, getProjectVideoUrl, deleteProject, type Project } from "@/lib/portal/store";
 import { getEvents, pointsForEvent, type AnnotationEvent } from "@/lib/portal/events";
 import { getSegments, type VideoSegment } from "@/lib/portal/segments";
-import { approveAndComplete, sendBackToAnnotator, reopenForReview } from "@/lib/portal/pipeline";
+import { approveAndComplete, sendBackToAnnotator, reopenForReview, rejectProject } from "@/lib/portal/pipeline";
 import VideoPlayer, { type VideoPlayerHandle } from "@/components/annotator-portal/VideoPlayer";
 import EventsTimeline from "@/components/annotator-portal/EventsTimeline";
 import EventsList from "@/components/annotator-portal/EventsList";
@@ -17,12 +18,18 @@ export default function AdminProjectReviewPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = use(params);
+  const router = useRouter();
   const videoRef = useRef<VideoPlayerHandle>(null);
   const [duration, setDuration] = useState(0);
   const [project, setProject] = useState<Project | null | undefined>(undefined);
   const [events, setEvents] = useState<AnnotationEvent[]>([]);
   const [segments, setSegments] = useState<VideoSegment[] | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [showReject, setShowReject] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
 
   async function refresh() {
     const [p, evts, segs] = await Promise.all([
@@ -78,6 +85,29 @@ export default function AdminProjectReviewPage({
     await refresh();
   }
 
+  async function handleReject() {
+    setActionError(null);
+    const result = await rejectProject(projectId, rejectReason);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    setShowReject(false);
+    setRejectReason("");
+    await refresh();
+  }
+
+  async function handleDelete() {
+    if (deleteConfirm !== project!.name) return;
+    setActionError(null);
+    const result = await deleteProject(projectId);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    router.push("/admin-portal/projects");
+  }
+
   return (
     <div>
       <p className="eyebrow mb-3">ADMIN CONSOLE</p>
@@ -85,7 +115,31 @@ export default function AdminProjectReviewPage({
         <h1 className="display-md uppercase">
           <span className="text-gradient">{project.name}</span>
         </h1>
-        <span className="hs-chip">{project.annotationStatus.toUpperCase()}</span>
+        <div className="flex flex-none items-center gap-3">
+          <span className="hs-chip">{project.annotationStatus.toUpperCase()}</span>
+          {project.annotationStatus !== "Rejected" && project.annotationStatus !== "Completed" && (
+            <button
+              onClick={() => {
+                setShowReject(true);
+                setRejectReason("");
+                setActionError(null);
+              }}
+              className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-[#ff9b9b] hover:text-[#ff6b6b]"
+            >
+              REJECT
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setShowDelete(true);
+              setDeleteConfirm("");
+              setActionError(null);
+            }}
+            className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint hover:text-[#ff6b6b]"
+          >
+            DELETE
+          </button>
+        </div>
       </div>
       <p className="mt-1 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
         OWNER {project.ownerName.toUpperCase()} · {project.format.toUpperCase()}
@@ -93,6 +147,19 @@ export default function AdminProjectReviewPage({
         {` · ${events.length} EVENTS`}
         {segments ? " · VIDEO SEGMENTED" : " · VIDEO NOT YET SEGMENTED"}
       </p>
+
+      {actionError && (
+        <div className="mt-4 rounded-md border border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.06] px-4 py-3 font-mono-tech text-[0.68rem] leading-relaxed text-[#ff9b9b]">
+          {actionError}
+        </div>
+      )}
+
+      {project.annotationStatus === "Rejected" && project.rejectionReason && (
+        <div className="hs-panel mt-4 p-4" style={{ borderColor: "rgba(255,107,107,0.3)" }}>
+          <p className="mb-1.5 font-mono-tech text-[0.58rem] tracking-[0.14em] text-[#ff9b9b]">REJECTION REASON</p>
+          <p className="text-sm leading-relaxed text-text-muted">{project.rejectionReason}</p>
+        </div>
+      )}
 
       {project.submissionNote && (
         <div className="hs-panel mt-4 p-4" style={{ borderColor: "var(--border-orange)" }}>
@@ -181,6 +248,67 @@ export default function AdminProjectReviewPage({
       <div className="mt-8">
         <LiveStatsPanel project={project} events={events} />
       </div>
+
+      {showReject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm">
+          <div className="hs-panel w-full max-w-md p-6" style={{ borderColor: "rgba(255,107,107,0.25)" }}>
+            <h2 className="mb-2 font-mono-tech text-[0.66rem] tracking-[0.2em] text-[#ff9b9b]">REJECT PROJECT</h2>
+            <p className="mb-4 text-sm leading-relaxed text-text-muted">
+              Mark <span className="text-text">{project.name}</span> as unannotatable — the client sees this reason
+              on their Results page. This cannot be undone from here.
+            </p>
+            <textarea
+              className="hs-input min-h-[80px] resize-y"
+              placeholder="Reason (e.g. corrupted video, wrong game footage, duplicate upload)"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+            />
+            <div className="mt-4 flex justify-end gap-3">
+              <button onClick={() => setShowReject(false)} className="hs-btn-ghost">
+                CANCEL
+              </button>
+              <button
+                onClick={handleReject}
+                className="rounded-md border px-4 py-2.5 font-mono-tech text-[0.7rem] tracking-[0.1em] text-[#ff9b9b] transition-colors hover:bg-[#ff6b6b]/10"
+                style={{ borderColor: "rgba(255,107,107,0.4)" }}
+              >
+                REJECT PROJECT
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm">
+          <div className="hs-panel w-full max-w-md p-6" style={{ borderColor: "rgba(255,107,107,0.25)" }}>
+            <h2 className="mb-2 font-mono-tech text-[0.66rem] tracking-[0.2em] text-[#ff9b9b]">DELETE PROJECT</h2>
+            <p className="mb-4 text-sm leading-relaxed text-text-muted">
+              Permanently delete <span className="text-text">{project.name}</span> — its roster, tagged events,
+              segments, and all uploaded video/clip files. This cannot be undone.
+            </p>
+            <input
+              className="hs-input"
+              placeholder={`Type "${project.name}" to confirm`}
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+            />
+            <div className="mt-4 flex justify-end gap-3">
+              <button onClick={() => setShowDelete(false)} className="hs-btn-ghost">
+                CANCEL
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteConfirm !== project.name}
+                className="rounded-md border px-4 py-2.5 font-mono-tech text-[0.7rem] tracking-[0.1em] text-[#ff9b9b] transition-colors hover:bg-[#ff6b6b]/10 disabled:cursor-not-allowed disabled:opacity-40"
+                style={{ borderColor: "rgba(255,107,107,0.4)" }}
+              >
+                PERMANENTLY DELETE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

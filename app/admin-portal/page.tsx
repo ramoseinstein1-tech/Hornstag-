@@ -25,7 +25,7 @@ function StatTile({ label, value, chips }: { label: string; value: number; chips
   );
 }
 
-const STATUS_ORDER: AnnotationStatus[] = ["Unclaimed", "Claimed", "In Review", "Completed"];
+const STATUS_ORDER: AnnotationStatus[] = ["Unclaimed", "Claimed", "In Review", "Completed", "Rejected"];
 
 export default function AdminDashboardPage() {
   const [users, setUsers] = useState<AdminUserSummary[]>([]);
