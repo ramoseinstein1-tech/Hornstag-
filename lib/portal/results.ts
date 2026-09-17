@@ -23,7 +23,7 @@ import {
 import { getSegments, periodForTimestamp, type VideoSegment } from "./segments";
 import type { Project, RosterPlayer, PlayerBoxScore, TaggedClip, ShotChartPoint, ProjectResults } from "./store";
 
-function formatClipTime(seconds: number): string {
+export function formatClipTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
@@ -32,7 +32,7 @@ function formatClipTime(seconds: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
 
-function computeBoxScoreForSide(
+export function computeBoxScoreForSide(
   roster: RosterPlayer[],
   events: AnnotationEvent[],
   segments: VideoSegment[],
@@ -68,13 +68,13 @@ function computeBoxScoreForSide(
  * client Results page's shot chart (components/client-portal/ShotChart.tsx).
  * Events tagged before a shot location existed, or without one for any
  * other reason, are silently skipped rather than plotted at (0,0). */
-function computeShotChart(events: AnnotationEvent[], teamSide: TeamSide): ShotChartPoint[] {
+export function computeShotChart(events: AnnotationEvent[], teamSide: TeamSide): ShotChartPoint[] {
   return events
     .filter((e) => e.teamSide === teamSide && SHOT_EVENT_TYPES.includes(e.eventType) && e.shotLocation)
     .map((e) => ({ x: e.shotLocation!.x, y: e.shotLocation!.y, made: !!e.made }));
 }
 
-function computeClips(project: Project, events: AnnotationEvent[], segments: VideoSegment[]): TaggedClip[] {
+export function computeClips(project: Project, events: AnnotationEvent[], segments: VideoSegment[]): TaggedClip[] {
   const findPlayer = (teamSide: TeamSide, playerId: string) =>
     (teamSide === "team" ? project.roster : project.opponentRoster ?? []).find((r) => r.id === playerId);
 
