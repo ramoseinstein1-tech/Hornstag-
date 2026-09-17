@@ -51,7 +51,7 @@ export const SUBSCRIPTION_PACKAGES: Record<SubscriptionPackageKey, SubscriptionP
   },
   franchise: {
     key: "franchise",
-    label: "Franchise",
+    label: "League Pass",
     pricePhp: 12000,
     singleTeamCredits: 10,
     bothTeamCredits: 10,
