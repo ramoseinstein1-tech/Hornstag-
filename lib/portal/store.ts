@@ -449,6 +449,23 @@ export async function createProject(
 ): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
   const supabase = createClient();
 
+  // Consumed BEFORE creating the project, not after-then-rolled-back —
+  // clients have no delete permission on projects at all (that's
+  // deliberately admin-only elsewhere in this app), so failing early
+  // here avoids ever needing one just for this rollback case.
+  const { data: hasCredit, error: creditError } = await supabase.rpc("consume_game_credit", {
+    target_scope: input.scope,
+  });
+  if (creditError) {
+    return { ok: false, error: creditError.message };
+  }
+  if (!hasCredit) {
+    return {
+      ok: false,
+      error: `No ${input.scope} game credits available — buy more games or a package on the Billing page.`,
+    };
+  }
+
   const { data: projectRow, error } = await supabase
     .from("projects")
     .insert({

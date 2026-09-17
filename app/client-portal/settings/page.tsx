@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { updateProfileName, changePassword, deleteOwnAccount, clearSession } from "@/lib/auth/supabaseAuth";
-import { deleteUserData as deleteBillingData } from "@/lib/portal/billing";
 import {
   getSettings,
   addTeamMember,
@@ -158,11 +157,9 @@ export default function AccountSettingsPage() {
       return;
     }
     // The real account + every DB row (projects, events, billing, etc.)
-    // is already gone via Supabase's on-delete-cascade. These two calls
-    // are only cleaning up the OLD localStorage mock data for billing.ts
-    // and settings.ts, which haven't been migrated yet — remove once
-    // that migration lands.
-    deleteBillingData(user.id);
+    // is already gone via Supabase's on-delete-cascade. This call is
+    // only cleaning up the OLD localStorage mock data for settings.ts,
+    // which hasn't been migrated yet — remove once that migration lands.
     deleteSettingsData(user.id);
     await clearSession();
     // A full hard navigation, not router.push(). A client-side transition

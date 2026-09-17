@@ -1,185 +1,122 @@
 /**
- * MOCK, CLIENT-SIDE BILLING STORE
+ * REAL, SUPABASE-BACKED GAME CREDITS
  * ─────────────────────────────────────────────────────────────────
- * Same story as the other lib/portal and lib/auth stores — no backend,
- * no real payment processor. Plan changes and "payments" here just
- * update localStorage; no card is ever charged. Replace with a real
- * billing provider (Stripe, etc.) before this handles real money.
+ * Replaces the old localStorage mock (fake monthly USD subscription
+ * tiers, no real payment tracking). Credits are real rows in
+ * `credit_batches` (see supabase/migrations/00000000000019_game_credits.sql),
+ * granted only by the Stripe webhook (app/api/webhooks/stripe/route.ts)
+ * once a payment actually completes — never by the client itself.
+ *
+ * Two ways to get credits:
+ *  - Per-game, pay-as-you-go (PER_GAME_PRICE_PHP) — never expire.
+ *  - A one-time subscription-package bundle (SUBSCRIPTION_PACKAGES) —
+ *    expires on a fixed schedule from purchase, doesn't renew.
  */
 
-export type PlanTier = "Starter" | "Pro" | "Enterprise";
+import { createClient } from "@/lib/supabase/client";
+import type { AnnotationScope } from "./store";
 
-export type PlanInfo = {
-  tier: PlanTier;
-  price: number;
-  projectsIncluded: number;
-  turnaround: string;
-  features: string[];
+export const PER_GAME_PRICE_PHP: Record<AnnotationScope, number> = {
+  "Single Team": 450,
+  "Both Teams": 950,
 };
 
-export type Invoice = {
+export type SubscriptionPackageKey = "rookie" | "starting_five" | "franchise";
+
+export type SubscriptionPackageInfo = {
+  key: SubscriptionPackageKey;
+  label: string;
+  pricePhp: number;
+  singleTeamCredits: number;
+  bothTeamCredits: number;
+  expiresInMonths: number;
+};
+
+export const SUBSCRIPTION_PACKAGES: Record<SubscriptionPackageKey, SubscriptionPackageInfo> = {
+  rookie: {
+    key: "rookie",
+    label: "Rookie",
+    pricePhp: 3800,
+    singleTeamCredits: 8,
+    bothTeamCredits: 0,
+    expiresInMonths: 2,
+  },
+  starting_five: {
+    key: "starting_five",
+    label: "Starting Five",
+    pricePhp: 6500,
+    singleTeamCredits: 5,
+    bothTeamCredits: 5,
+    expiresInMonths: 3,
+  },
+  franchise: {
+    key: "franchise",
+    label: "Franchise",
+    pricePhp: 12000,
+    singleTeamCredits: 10,
+    bothTeamCredits: 10,
+    expiresInMonths: 4,
+  },
+};
+
+export const SUBSCRIPTION_PACKAGE_ORDER: SubscriptionPackageKey[] = ["rookie", "starting_five", "franchise"];
+
+export type CreditBatch = {
   id: string;
-  date: string;
-  amount: number;
-  status: "Paid";
-  planTier: PlanTier;
+  scope: AnnotationScope;
+  quantityTotal: number;
+  quantityRemaining: number;
+  source: string;
+  expiresAt?: string;
+  createdAt: string;
 };
 
-export type BillingData = {
-  planTier: PlanTier;
-  cardBrand: string;
-  cardLast4: string;
-  cardExpiry: string;
-  invoices: Invoice[];
+type CreditBatchRow = {
+  id: string;
+  scope: AnnotationScope;
+  quantity_total: number;
+  quantity_remaining: number;
+  source: string;
+  expires_at: string | null;
+  created_at: string;
 };
 
-export const PLANS: Record<PlanTier, PlanInfo> = {
-  Starter: {
-    tier: "Starter",
-    price: 149,
-    projectsIncluded: 3,
-    turnaround: "5–7 business days",
-    features: [
-      "3 projects / month",
-      "Standard annotation",
-      "CSV exports",
-      "Email support",
-    ],
-  },
-  Pro: {
-    tier: "Pro",
-    price: 399,
-    projectsIncluded: 10,
-    turnaround: "2–3 business days",
-    features: [
-      "10 projects / month",
-      "Priority annotation queue",
-      "Dedicated QA reviewer",
-      "CSV exports",
-      "Priority support",
-    ],
-  },
-  Enterprise: {
-    tier: "Enterprise",
-    price: 999,
-    projectsIncluded: 30,
-    turnaround: "24–48 hours",
-    features: [
-      "30+ projects / month",
-      "Rush annotation available",
-      "Dedicated account manager",
-      "Custom integrations",
-      "SLA-backed support",
-    ],
-  },
-};
-
-const KEY_PREFIX = "hornstag_billing_";
-
-function isBrowser() {
-  return typeof window !== "undefined";
-}
-
-function key(userId: string) {
-  return `${KEY_PREFIX}${userId}`;
-}
-
-function seedBilling(): BillingData {
-  const now = Date.now();
-  const daysAgo = (d: number) => new Date(now - d * 24 * 60 * 60 * 1000).toISOString();
-
+function mapBatchRow(row: CreditBatchRow): CreditBatch {
   return {
-    planTier: "Pro",
-    cardBrand: "Visa",
-    cardLast4: "4242",
-    cardExpiry: "12/27",
-    invoices: [
-      { id: "inv-1", date: daysAgo(2), amount: 399, status: "Paid", planTier: "Pro" },
-      { id: "inv-2", date: daysAgo(32), amount: 399, status: "Paid", planTier: "Pro" },
-      { id: "inv-3", date: daysAgo(62), amount: 149, status: "Paid", planTier: "Starter" },
-    ],
+    id: row.id,
+    scope: row.scope,
+    quantityTotal: row.quantity_total,
+    quantityRemaining: row.quantity_remaining,
+    source: row.source,
+    expiresAt: row.expires_at ?? undefined,
+    createdAt: row.created_at,
   };
 }
 
-function isValidShape(data: unknown): data is BillingData {
-  if (!data || typeof data !== "object") return false;
-  const d = data as BillingData;
-  return (
-    typeof d.planTier === "string" &&
-    typeof d.cardLast4 === "string" &&
-    Array.isArray(d.invoices)
-  );
+/** Every credit batch the CALLER owns — RLS restricts this to the
+ * signed-in user's own rows regardless of the userId passed in. */
+export async function getCreditBatches(userId: string): Promise<CreditBatch[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("credit_batches")
+    .select("*")
+    .eq("owner_id", userId)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return (data as CreditBatchRow[]).map(mapBatchRow);
 }
 
-function readBilling(userId: string): BillingData {
-  if (!isBrowser()) return seedBilling();
-  try {
-    const raw = window.localStorage.getItem(key(userId));
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (isValidShape(parsed)) return parsed;
-    }
-  } catch {
-    // Corrupt data — fall through and reseed.
+function isExpired(batch: CreditBatch): boolean {
+  return batch.expiresAt != null && new Date(batch.expiresAt).getTime() <= Date.now();
+}
+
+/** Sums quantity_remaining per scope across every non-expired batch —
+ * what the billing page shows as the current usable balance. */
+export function creditBalance(batches: CreditBatch[]): Record<AnnotationScope, number> {
+  const balance: Record<AnnotationScope, number> = { "Single Team": 0, "Both Teams": 0 };
+  for (const batch of batches) {
+    if (isExpired(batch)) continue;
+    balance[batch.scope] += batch.quantityRemaining;
   }
-  const seeded = seedBilling();
-  writeBilling(userId, seeded);
-  return seeded;
-}
-
-function writeBilling(userId: string, data: BillingData) {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(key(userId), JSON.stringify(data));
-}
-
-export function getBilling(userId: string): BillingData {
-  return readBilling(userId);
-}
-
-export function deleteUserData(userId: string) {
-  if (!isBrowser()) return;
-  window.localStorage.removeItem(key(userId));
-}
-
-export function changePlan(userId: string, tier: PlanTier): BillingData {
-  const data = readBilling(userId);
-  data.planTier = tier;
-  data.invoices = [
-    {
-      id: crypto.randomUUID(),
-      date: new Date().toISOString(),
-      amount: PLANS[tier].price,
-      status: "Paid",
-      planTier: tier,
-    },
-    ...data.invoices,
-  ];
-  writeBilling(userId, data);
-  return data;
-}
-
-export function downloadInvoice(invoice: Invoice, billedTo: string) {
-  if (!isBrowser()) return;
-  const lines = [
-    "HORNSTAG — INVOICE RECEIPT",
-    "================================",
-    `Invoice ID: ${invoice.id}`,
-    `Billed to: ${billedTo}`,
-    `Date: ${new Date(invoice.date).toLocaleDateString()}`,
-    `Plan: ${invoice.planTier}`,
-    `Amount: $${invoice.amount.toFixed(2)}`,
-    `Status: ${invoice.status}`,
-    "================================",
-    "This is a mock receipt generated for demo purposes — no real",
-    "payment was processed.",
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `hornstag_invoice_${invoice.id}.txt`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  return balance;
 }

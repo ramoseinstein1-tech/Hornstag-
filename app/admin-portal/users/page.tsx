@@ -12,8 +12,8 @@ import {
   type AnnotatorInvite,
 } from "@/lib/auth/supabaseAuth";
 import type { UserRole } from "@/lib/auth/types";
-import { formatRelativeTime } from "@/lib/portal/store";
-import { deleteUserData as deleteBillingData, getBilling } from "@/lib/portal/billing";
+import { formatRelativeTime, type AnnotationScope } from "@/lib/portal/store";
+import { getCreditBatches, creditBalance } from "@/lib/portal/billing";
 import { deleteUserData as deleteSettingsData } from "@/lib/portal/settings";
 
 type Filter = "all" | "client" | "annotator" | "admin";
@@ -23,6 +23,7 @@ const ROLE_OPTIONS: UserRole[] = ["client", "annotator", "admin"];
 export default function AdminUsersPage() {
   const { user: me } = useAuth();
   const [users, setUsers] = useState<AdminUserSummary[]>([]);
+  const [credits, setCredits] = useState<Map<string, Record<AnnotationScope, number>>>(new Map());
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [deleteTarget, setDeleteTarget] = useState<AdminUserSummary | null>(null);
@@ -30,8 +31,15 @@ export default function AdminUsersPage() {
   const [error, setError] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
-    setUsers(await listAllUsers());
+    const list = await listAllUsers();
+    setUsers(list);
     setLoading(false);
+
+    const clients = list.filter((u) => u.role === "client");
+    const entries = await Promise.all(
+      clients.map(async (u) => [u.id, creditBalance(await getCreditBatches(u.id))] as const)
+    );
+    setCredits(new Map(entries));
   }, []);
 
   useEffect(() => {
@@ -62,14 +70,13 @@ export default function AdminUsersPage() {
       return;
     }
 
-    // The real account + every DB row (projects, events, claims, etc.) is
-    // already gone via Supabase's on-delete-cascade (and claimed_by is set
-    // null on any project an annotator had claimed). These two calls are
-    // only cleaning up the OLD localStorage mock data for billing.ts and
-    // settings.ts, which haven't been migrated yet — remove once that
-    // migration lands.
+    // The real account + every DB row (projects, events, claims,
+    // credit_batches, etc.) is already gone via Supabase's
+    // on-delete-cascade (and claimed_by is set null on any project an
+    // annotator had claimed). This call is only cleaning up the OLD
+    // localStorage mock data for settings.ts, which hasn't been
+    // migrated yet — remove once that migration lands.
     if (deleteTarget.role === "client") {
-      deleteBillingData(deleteTarget.id);
       deleteSettingsData(deleteTarget.id);
     }
 
@@ -122,7 +129,7 @@ export default function AdminUsersPage() {
                 <th className="px-5 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">USER</th>
                 <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">ROLE</th>
                 <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">JOINED</th>
-                <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">PLAN</th>
+                <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">CREDITS (SINGLE/BOTH)</th>
                 <th className="px-5 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint text-right">ACTIONS</th>
               </tr>
             </thead>
@@ -166,7 +173,9 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-text-muted">{formatRelativeTime(u.createdAt)}</td>
                       <td className="px-3 py-3 text-text-muted">
-                        {u.role === "client" ? getBilling(u.id).planTier : "—"}
+                        {u.role === "client"
+                          ? `${credits.get(u.id)?.["Single Team"] ?? 0} / ${credits.get(u.id)?.["Both Teams"] ?? 0}`
+                          : "—"}
                       </td>
                       <td className="px-5 py-3 text-right">
                         <button
