@@ -450,9 +450,10 @@ export async function createProject(
   const supabase = createClient();
 
   // Consumed BEFORE creating the project, not after-then-rolled-back —
-  // clients have no delete permission on projects at all (that's
-  // deliberately admin-only elsewhere in this app), so failing early
-  // here avoids ever needing one just for this rollback case.
+  // clients have no delete permission on projects at all (RLS enforces
+  // this — see supabase/migrations/00000000000020_rls_hardening.sql —
+  // deletion is deliberately admin-only elsewhere in this app), so
+  // failing early here avoids ever needing one just for this rollback case.
   const { data: hasCredit, error: creditError } = await supabase.rpc("consume_game_credit", {
     target_scope: input.scope,
   });

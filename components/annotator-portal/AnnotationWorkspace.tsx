@@ -112,11 +112,15 @@ export default function AnnotationWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
-  // "Claimed" is the only status this workspace is ever reached with while
-  // still editable — once submitted ("In Review") or QA'd ("Completed"),
-  // it's out of the annotator's hands (submission is a one-way door; see
-  // lib/portal/pipeline.ts).
-  const readOnly = annotationStatus !== "Claimed";
+  // "Claimed" and "Correction Required" are the only statuses the
+  // annotator can still edit under — matching exactly what the
+  // submit_for_review RPC itself accepts a submission from (see
+  // supabase/migrations/00000000000015_correction_required.sql). Once
+  // submitted ("In Review") or QA'd ("Completed"), it's out of the
+  // annotator's hands (submission is a one-way door; see
+  // lib/portal/pipeline.ts) — RLS enforces this same boundary at the
+  // database level too, not just here.
+  const readOnly = annotationStatus !== "Claimed" && annotationStatus !== "Correction Required";
   const lockedMessage =
     annotationStatus === "Completed"
       ? "This match has been reviewed and completed — no further edits."
