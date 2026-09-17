@@ -173,6 +173,11 @@ function BillingPageContent() {
         </p>
       </div>
 
+      <div className="mt-8 rounded-md border border-border bg-surface-light px-4 py-3 font-mono-tech text-[0.6rem] leading-relaxed tracking-[0.02em] text-text-faint">
+        All purchases below are final — game credits and packages are non-refundable once bought. See our{" "}
+        <a href="/terms#subscriptions" className="text-orange-bright hover:text-orange">Terms of Service</a> for details.
+      </div>
+
       <div className="mt-10">
         <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
           BUY GAMES

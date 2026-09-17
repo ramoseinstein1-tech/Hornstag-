@@ -111,11 +111,12 @@ const sections: LegalSection[] = [
     heading: "7. Subscriptions and Payment",
     content: (
       <p>
-        Certain features of the Service may require a paid subscription.
-        Where applicable, pricing, billing cycle, and cancellation terms will
-        be presented to you at the time of purchase. Fees are non-refundable
-        except as required by law or as otherwise stated at the point of
-        sale.
+        Certain features of the Service require purchasing game annotation
+        credits, either individually or as part of a package. Pricing and,
+        where applicable, credit expiration terms are presented to you at
+        the time of purchase. All purchases are final: fees are
+        non-refundable except as required by law or as otherwise stated at
+        the point of sale.
       </p>
     ),
   },
