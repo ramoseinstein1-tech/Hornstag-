@@ -100,10 +100,20 @@ export async function getPendingPaymentClaims(): Promise<PaymentClaim[]> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("payment_claims")
-    .select("*, profiles(name, email)")
+    // payment_claims has two FKs into profiles (owner_id AND
+    // reviewed_by) — a bare "profiles(...)" embed is ambiguous to
+    // PostgREST and errors, so the owner_id relationship has to be
+    // named explicitly here (PostgREST's !<column> disambiguation
+    // hint, more robust than guessing Postgres's auto-generated
+    // constraint name).
+    .select("*, profiles!owner_id(name, email)")
     .eq("status", "pending")
     .order("created_at", { ascending: true });
-  if (error || !data) return [];
+  if (error) {
+    console.error("getPendingPaymentClaims failed:", error.message);
+    return [];
+  }
+  if (!data) return [];
   return (data as unknown as PaymentClaimRow[]).map(mapClaimRow);
 }
 
