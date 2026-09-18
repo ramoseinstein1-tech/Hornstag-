@@ -192,7 +192,7 @@ function Basketball({
         <group ref={seamGroup}>
           {seamCurves.map((curve, i) => (
             <mesh key={i}>
-              <tubeGeometry args={[curve, 200, 0.0135, 10, true]} />
+              <tubeGeometry args={[curve, 200, 0.02, 10, true]} />
               <meshStandardMaterial
                 color="#120d09"
                 roughness={0.85}

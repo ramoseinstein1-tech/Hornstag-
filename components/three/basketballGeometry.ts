@@ -14,11 +14,12 @@ export function createLeatherTextures() {
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
 
-  // Base leather tone — deep burnt orange; brand orange arrives via rim light.
+  // Base leather tone — a brighter, more true-to-life basketball orange
+  // (reference: a real ball's vivid orange-red, not a muted burnt tone).
   const base = ctx.createLinearGradient(0, 0, 0, size);
-  base.addColorStop(0, "#b9500f");
-  base.addColorStop(0.5, "#c85a13");
-  base.addColorStop(1, "#a44509");
+  base.addColorStop(0, "#d9691f");
+  base.addColorStop(0.5, "#e57a2e");
+  base.addColorStop(1, "#c25617");
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, size, size);
 

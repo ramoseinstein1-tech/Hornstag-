@@ -64,7 +64,7 @@ function Ball({ reducedMotion }: { reducedMotion: boolean }) {
         </mesh>
         {seamCurves.map((curve, i) => (
           <mesh key={i}>
-            <tubeGeometry args={[curve, 160, 0.0135, 8, true]} />
+            <tubeGeometry args={[curve, 160, 0.02, 8, true]} />
             <meshStandardMaterial
               color="#120d09"
               roughness={0.85}
