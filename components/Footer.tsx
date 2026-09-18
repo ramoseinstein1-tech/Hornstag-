@@ -147,6 +147,19 @@ export default function Footer() {
             FROM COURT ACTION TO STRUCTURED DATA.
           </span>
         </div>
+
+        <p className="mt-4 text-[0.68rem] text-text-faint/70">
+          Tiger mascot 3D model by{" "}
+          <a
+            href="https://www.meshy.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-dotted transition-colors duration-300 hover:text-orange-bright"
+          >
+            Meshy
+          </a>
+          , licensed CC BY 4.0.
+        </p>
       </div>
     </footer>
   );

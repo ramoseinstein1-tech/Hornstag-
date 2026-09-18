@@ -3,12 +3,8 @@
 import { Suspense, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
-
-const AuthBasketball = dynamic(() => import("../AuthBasketball"), {
-  ssr: false,
-});
+import AuthMascot from "./AuthMascot";
 
 const PROOF = [
   { value: "94", label: "GAMES ANNOTATED" },
@@ -46,8 +42,8 @@ export default function AuthShell({
         />
 
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="h-[62%] w-[62%] max-w-[460px]">
-            <AuthBasketball />
+          <div className="h-[78%] w-full max-w-[420px]">
+            <AuthMascot />
           </div>
         </div>
 
