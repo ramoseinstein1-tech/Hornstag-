@@ -31,7 +31,7 @@ function BasketballFallback() {
         className="h-56 w-56 rounded-full md:h-72 md:w-72"
         style={{
           background:
-            "radial-gradient(circle at 35% 30%, #ff9142 0%, #d9691f 55%, #7a3410 100%)",
+            "radial-gradient(circle at 35% 30%, #ffa347 0%, #ff7a1f 55%, #8a3a10 100%)",
           boxShadow: "0 0 140px 30px rgba(255,106,0,0.22)",
         }}
       />

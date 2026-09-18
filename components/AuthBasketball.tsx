@@ -57,7 +57,7 @@ function Ball({ reducedMotion }: { reducedMotion: boolean }) {
             clearcoatRoughness={0.9}
             sheen={0.4}
             sheenRoughness={0.85}
-            sheenColor={new THREE.Color("#ff9a52")}
+            sheenColor={new THREE.Color("#ffab5e")}
             envMap={envMap}
             envMapIntensity={0.38}
           />

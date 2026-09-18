@@ -14,12 +14,14 @@ export function createLeatherTextures() {
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
 
-  // Base leather tone — a brighter, more true-to-life basketball orange
-  // (reference: a real ball's vivid orange-red, not a muted burnt tone).
+  // Base leather tone — pushed toward the site's own vivid brand orange
+  // (#ff6a00) rather than a photographically "correct" muted basketball
+  // orange, so the ball actually pops against the dark background instead
+  // of blending into it.
   const base = ctx.createLinearGradient(0, 0, 0, size);
-  base.addColorStop(0, "#d9691f");
-  base.addColorStop(0.5, "#e57a2e");
-  base.addColorStop(1, "#c25617");
+  base.addColorStop(0, "#ff7a1f");
+  base.addColorStop(0.5, "#ff8f3d");
+  base.addColorStop(1, "#e0611a");
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, size, size);
 
@@ -160,9 +162,10 @@ export function createStudioEnvTexture() {
 
 /**
  * Classic basketball seams as 3D paths on the sphere surface (rather than a
- * flat texture) so they read correctly in relief at any viewing angle — one
- * wavy "equator" seam plus two meridian seams 90° apart, approximating the
- * eight-panel pattern.
+ * flat texture) so they read correctly in relief at any viewing angle — a
+ * wavy "equator" seam plus four meridian seams at 45° offsets (rather than
+ * just two at 90°), each individually bowed, for a busier criss-cross that
+ * reads closer to a real ball's eight-panel layout than a plain 4-panel grid.
  */
 export function createSeamCurves(radius: number): THREE.CatmullRomCurve3[] {
   const curves: THREE.CatmullRomCurve3[] = [];
@@ -183,13 +186,21 @@ export function createSeamCurves(radius: number): THREE.CatmullRomCurve3[] {
   }
   curves.push(new THREE.CatmullRomCurve3(equator, true));
 
-  for (const offset of [0, Math.PI / 2]) {
+  const meridianOffsets = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
+  meridianOffsets.forEach((offset, idx) => {
     const meridian: THREE.Vector3[] = [];
+    // Each meridian bows outward more strongly than a plain great circle,
+    // peaking near the equator crossings and easing back to ~0 at the
+    // poles — closer to how a real panel seam curves, not a straight line
+    // from pole to pole. A per-curve phase offset keeps the four from
+    // looking like mechanical copies of each other.
+    const phase = idx * 0.9;
     for (let i = 0; i <= segments; i++) {
       const phi = (i / segments) * Math.PI * 2;
-      const wobble = Math.sin(phi * 4) * 0.05;
+      const bow = Math.sin(phi) * Math.sin(phi) * 0.16;
+      const wobble = Math.sin(phi * 4 + phase) * 0.045;
       const v = new THREE.Vector3(
-        Math.sin(phi) * (1 + wobble),
+        Math.sin(phi) * (1 + bow + wobble),
         Math.cos(phi),
         0
       )
@@ -199,7 +210,7 @@ export function createSeamCurves(radius: number): THREE.CatmullRomCurve3[] {
       meridian.push(v);
     }
     curves.push(new THREE.CatmullRomCurve3(meridian, true));
-  }
+  });
 
   return curves;
 }
