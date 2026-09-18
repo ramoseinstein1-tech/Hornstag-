@@ -63,7 +63,7 @@ export default function BillingPage() {
   const [batches, setBatches] = useState<CreditBatch[]>([]);
   const [claims, setClaims] = useState<PaymentClaim[]>([]);
 
-  const [payMethod, setPayMethod] = useState<PaymentMethod>("gcash");
+  const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
   const [buyKind, setBuyKind] = useState<"per_game" | "subscription">("per_game");
   const [buyScope, setBuyScope] = useState<AnnotationScope>("Single Team");
   const [buyQuantity, setBuyQuantity] = useState(1);
@@ -100,7 +100,7 @@ export default function BillingPage() {
     buyKind === "per_game" ? PER_GAME_PRICE_PHP[buyScope] * buyQuantity : SUBSCRIPTION_PACKAGES[buyPackage].pricePhp;
 
   async function handleSubmitClaim() {
-    if (!user || referenceNumber.trim().length < 3) return;
+    if (!user || !payMethod || referenceNumber.trim().length < 3) return;
     setSubmitting(true);
     const result = await submitPaymentClaim(user.id, {
       kind: buyKind,
@@ -180,119 +180,147 @@ export default function BillingPage() {
         <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
           PAY VIA E-WALLET
         </h2>
-        <div className="hs-panel sheen-top flex flex-col gap-5 p-5 sm:max-w-xl">
-          <div className="flex gap-2">
-            {(["per_game", "subscription"] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setBuyKind(k)}
-                className={`hs-chip transition-colors ${buyKind === k ? "!border-orange/50 !text-orange-bright" : "text-text-faint"}`}
-              >
-                {k === "per_game" ? "Per-game" : "Package"}
-              </button>
-            ))}
-          </div>
-
-          {buyKind === "per_game" ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label htmlFor="buy-scope" className="hs-label">SCOPE</label>
-                <select
-                  id="buy-scope"
-                  className="hs-input"
-                  value={buyScope}
-                  onChange={(e) => setBuyScope(e.target.value as AnnotationScope)}
+        <div className="hs-panel sheen-top flex flex-col gap-6 p-6 sm:max-w-2xl">
+          <div>
+            <p className="mb-3 font-mono-tech text-[0.58rem] tracking-[0.16em] text-text-faint">STEP 1 — WHAT ARE YOU BUYING</p>
+            <div className="flex gap-2">
+              {(["per_game", "subscription"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setBuyKind(k)}
+                  className={`hs-chip transition-colors ${buyKind === k ? "!border-orange/50 !text-orange-bright" : "text-text-faint"}`}
                 >
-                  {SCOPES.map((s) => (
-                    <option key={s} value={s}>
-                      {s} — {formatPhp(PER_GAME_PRICE_PHP[s])}/game
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="buy-quantity" className="hs-label">QUANTITY</label>
-                <input
-                  id="buy-quantity"
-                  type="number"
-                  min={1}
-                  max={100}
-                  className="hs-input"
-                  value={buyQuantity}
-                  onChange={(e) => setBuyQuantity(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
-                />
-              </div>
+                  {k === "per_game" ? "Per-game" : "Package"}
+                </button>
+              ))}
             </div>
-          ) : (
-            <div>
-              <label htmlFor="buy-package" className="hs-label">PACKAGE</label>
-              <select
-                id="buy-package"
-                className="hs-input"
-                value={buyPackage}
-                onChange={(e) => setBuyPackage(e.target.value as SubscriptionPackageKey)}
-              >
+
+            {buyKind === "per_game" ? (
+              <div className="mt-4 flex flex-col gap-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {SCOPES.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setBuyScope(s)}
+                      className={`hs-panel sheen-top flex flex-col items-start p-4 text-left transition-colors ${
+                        buyScope === s ? "!border-orange/50" : ""
+                      }`}
+                    >
+                      <span className={`font-display text-sm font-semibold ${buyScope === s ? "text-orange-bright" : "text-text"}`}>
+                        {s}
+                      </span>
+                      <span className="mt-1 font-mono-tech text-[0.6rem] tracking-[0.06em] text-text-faint">
+                        {formatPhp(PER_GAME_PRICE_PHP[s])} / game
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-3">
+                  <label htmlFor="buy-quantity" className="hs-label !mb-0">QUANTITY</label>
+                  <input
+                    id="buy-quantity"
+                    type="number"
+                    min={1}
+                    max={100}
+                    className="hs-input !w-24"
+                    value={buyQuantity}
+                    onChange={(e) => setBuyQuantity(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {SUBSCRIPTION_PACKAGE_ORDER.map((key) => {
                   const info = SUBSCRIPTION_PACKAGES[key];
+                  const selected = buyPackage === key;
                   return (
-                    <option key={key} value={key}>
-                      {info.label} — {formatPhp(info.pricePhp)} ({info.singleTeamCredits} single / {info.bothTeamCredits} both, expires {info.expiresInMonths}mo)
-                    </option>
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setBuyPackage(key)}
+                      className={`hs-panel sheen-top flex flex-col items-start p-4 text-left transition-colors ${
+                        selected ? "!border-orange/50" : ""
+                      }`}
+                    >
+                      <span className={`font-display text-sm font-semibold ${selected ? "text-orange-bright" : "text-text"}`}>
+                        {info.label}
+                      </span>
+                      <span className="mt-1 font-display text-lg font-semibold text-text">{formatPhp(info.pricePhp)}</span>
+                      <span className="mt-2 font-mono-tech text-[0.58rem] leading-relaxed text-text-faint">
+                        {info.singleTeamCredits > 0 && <>{info.singleTeamCredits} Single Team<br /></>}
+                        {info.bothTeamCredits > 0 && <>{info.bothTeamCredits} Both Teams<br /></>}
+                        Expires {info.expiresInMonths}mo
+                      </span>
+                    </button>
                   );
                 })}
-              </select>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
 
-          <div>
-            <label htmlFor="pay-method" className="hs-label">PAY WITH</label>
-            <select
-              id="pay-method"
-              className="hs-input"
-              value={payMethod}
-              onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}
-            >
+          <div className="border-t border-border pt-6">
+            <p className="mb-3 font-mono-tech text-[0.58rem] tracking-[0.16em] text-text-faint">STEP 2 — PAY WITH</p>
+            <div className="flex flex-wrap gap-2">
               {PAYMENT_METHOD_ORDER.map((m) => (
-                <option key={m} value={m}>{PAYMENT_METHOD_LABELS[m]}</option>
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setPayMethod(m)}
+                  className={`hs-chip transition-colors ${payMethod === m ? "!border-orange/50 !text-orange-bright" : "text-text-faint"}`}
+                >
+                  {PAYMENT_METHOD_LABELS[m]}
+                </button>
               ))}
-            </select>
-          </div>
+            </div>
 
-          <div className="flex flex-col items-center gap-3 rounded-md border border-border bg-surface-light p-5 text-center">
-            <img
-              src={`/payment-qr/${payMethod}.jpg`}
-              alt={`${PAYMENT_METHOD_LABELS[payMethod]} QR code`}
-              className="h-48 w-48 rounded border border-border bg-white object-contain p-2"
-            />
-            <p className="font-mono-tech text-[0.62rem] tracking-[0.06em] text-text-faint">
-              Scan with {PAYMENT_METHOD_LABELS[payMethod]} and pay <span className="text-text">{formatPhp(buyTotal)}</span>,
-              then enter your payment reference number below.
-            </p>
-          </div>
+            <AnimatePresence>
+              {payMethod && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, y: -8, height: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-5 flex flex-col items-center gap-4 rounded-md border border-border bg-surface-light p-6 text-center">
+                    <img
+                      src={`/payment-qr/${payMethod}.jpg`}
+                      alt={`${PAYMENT_METHOD_LABELS[payMethod]} QR code`}
+                      className="h-52 w-52 rounded-md border border-border bg-white object-contain p-2 shadow-lg shadow-black/20"
+                    />
+                    <div>
+                      <p className="font-display text-xl font-semibold text-orange-bright">{formatPhp(buyTotal)}</p>
+                      <p className="mt-1 font-mono-tech text-[0.62rem] tracking-[0.06em] text-text-faint">
+                        Scan with {PAYMENT_METHOD_LABELS[payMethod]} to pay, then enter your reference number below.
+                      </p>
+                    </div>
+                  </div>
 
-          <div>
-            <label htmlFor="reference-number" className="hs-label">PAYMENT REFERENCE NUMBER</label>
-            <input
-              id="reference-number"
-              className="hs-input"
-              placeholder="e.g. 1234567890123"
-              value={referenceNumber}
-              onChange={(e) => setReferenceNumber(e.target.value)}
-            />
-          </div>
+                  <div className="mt-5">
+                    <label htmlFor="reference-number" className="hs-label">PAYMENT REFERENCE NUMBER</label>
+                    <input
+                      id="reference-number"
+                      className="hs-input"
+                      placeholder="e.g. 1234567890123"
+                      value={referenceNumber}
+                      onChange={(e) => setReferenceNumber(e.target.value)}
+                    />
+                  </div>
 
-          <div className="flex items-center justify-between border-t border-border pt-4">
-            <p className="font-mono-tech text-[0.62rem] tracking-[0.08em] text-text-faint">
-              TOTAL: <span className="text-text">{formatPhp(buyTotal)}</span>
-            </p>
-            <button
-              onClick={handleSubmitClaim}
-              disabled={submitting || referenceNumber.trim().length < 3}
-              className="hs-btn-primary disabled:cursor-wait disabled:opacity-70"
-            >
-              {submitting ? "SUBMITTING..." : "I'VE PAID — SUBMIT FOR REVIEW"}
-            </button>
+                  <div className="mt-5 flex items-center justify-end border-t border-border pt-5">
+                    <button
+                      onClick={handleSubmitClaim}
+                      disabled={submitting || referenceNumber.trim().length < 3}
+                      className="hs-btn-primary disabled:cursor-wait disabled:opacity-70"
+                    >
+                      {submitting ? "SUBMITTING..." : "I'VE PAID — SUBMIT FOR REVIEW"}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>

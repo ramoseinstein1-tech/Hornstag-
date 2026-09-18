@@ -84,7 +84,7 @@ export type ActivityEntry = {
   time: string;
 };
 
-type RosterRow = { id: string; side: "team" | "opponent"; number: string; name: string; sort_order: number };
+type RosterRow = { id: string; project_id: string; side: "team" | "opponent"; number: string; name: string; sort_order: number };
 
 type ProjectRow = {
   id: string;
@@ -161,7 +161,34 @@ function mapProjectRow(row: ProjectRow): Project {
   };
 }
 
-const PROJECT_SELECT = "*, roster_players(*)";
+const PROJECT_SELECT = "*";
+
+/** Fetches roster_players for a batch of projects as a SEPARATE query and
+ * attaches them, rather than a nested `projects.select("*, roster_players(*)")`
+ * embed — that embed, combined with RLS on both tables, was silently
+ * flattening the result into one duplicate top-level project row per
+ * roster player (a project with 3 players showed up 3 times) any time
+ * the query ran through the normal RLS-scoped client. Confirmed via a
+ * direct comparison: the same embedded query returned correctly
+ * (one row per project) through the service-role client, which
+ * bypasses RLS entirely — so this is an RLS+embed interaction, not a
+ * plain PostgREST bug, and the robust fix is to just not rely on that
+ * embed for aggregation at all. */
+async function attachRosters<T extends { id: string }>(rows: T[]): Promise<(T & { roster_players: RosterRow[] })[]> {
+  if (rows.length === 0) return [];
+  const supabase = createClient();
+  const { data } = await supabase
+    .from("roster_players")
+    .select("*")
+    .in("project_id", rows.map((r) => r.id));
+  const byProject = new Map<string, RosterRow[]>();
+  for (const r of (data as RosterRow[] | null) ?? []) {
+    const list = byProject.get(r.project_id) ?? [];
+    list.push(r);
+    byProject.set(r.project_id, list);
+  }
+  return rows.map((r) => ({ ...r, roster_players: byProject.get(r.id) ?? [] }));
+}
 
 /** Every project a CLIENT owns. RLS already restricts this to their own
  * rows, but filtering by owner_id here too keeps the query intent clear. */
@@ -173,14 +200,16 @@ export async function getProjects(userId: string): Promise<Project[]> {
     .eq("owner_id", userId)
     .order("created_at", { ascending: false });
   if (error || !data) return [];
-  return (data as unknown as ProjectRow[]).map(mapProjectRow);
+  const withRosters = await attachRosters(data as unknown as Omit<ProjectRow, "roster_players">[]);
+  return withRosters.map(mapProjectRow);
 }
 
 export async function getProject(projectId: string): Promise<Project | null> {
   const supabase = createClient();
   const { data, error } = await supabase.from("projects").select(PROJECT_SELECT).eq("id", projectId).single();
   if (error || !data) return null;
-  return mapProjectRow(data as unknown as ProjectRow);
+  const [withRoster] = await attachRosters([data as unknown as Omit<ProjectRow, "roster_players">]);
+  return mapProjectRow(withRoster);
 }
 
 /** The shared placeholder every workspace played before Phase 2 — still
@@ -297,7 +326,8 @@ export async function getVisibleProjects(): Promise<Project[]> {
     .select(PROJECT_SELECT)
     .order("created_at", { ascending: false });
   if (error || !data) return [];
-  return (data as unknown as ProjectRow[]).map(mapProjectRow);
+  const withRosters = await attachRosters(data as unknown as Omit<ProjectRow, "roster_players">[]);
+  return withRosters.map(mapProjectRow);
 }
 
 /** Admin-only: permanently deletes a project, its R2 video/clip files,
