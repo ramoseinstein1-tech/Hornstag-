@@ -261,7 +261,7 @@ export default function BillingPage() {
 
           <div className="flex flex-col items-center gap-3 rounded-md border border-border bg-surface-light p-5 text-center">
             <img
-              src={`/payment-qr/${payMethod}.png`}
+              src={`/payment-qr/${payMethod}.jpg`}
               alt={`${PAYMENT_METHOD_LABELS[payMethod]} QR code`}
               className="h-48 w-48 rounded border border-border bg-white object-contain p-2"
             />
