@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { getProjects } from "@/lib/portal/store";
@@ -15,6 +14,14 @@ import {
   type CreditBatch,
   type SubscriptionPackageKey,
 } from "@/lib/portal/billing";
+import {
+  getMyPaymentClaims,
+  submitPaymentClaim,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_METHOD_ORDER,
+  type PaymentClaim,
+  type PaymentMethod,
+} from "@/lib/portal/paymentClaims";
 
 const SCOPES: AnnotationScope[] = ["Single Team", "Both Teams"];
 
@@ -33,26 +40,46 @@ function StatTile({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function BillingPageContent() {
+function sourceLabel(source: string): string {
+  if (source === "per_game" || source === "ewallet_claim") return "Per-game";
+  if (source === "manual_grant") return "Manual grant";
+  return SUBSCRIPTION_PACKAGES[source as SubscriptionPackageKey]?.label ?? source;
+}
+
+const CLAIM_STATUS_STYLES: Record<PaymentClaim["status"], string> = {
+  pending: "text-orange-bright",
+  approved: "text-[#7cd48a]",
+  rejected: "text-[#ff9b9b]",
+};
+
+export default function BillingPage() {
   const { user } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeTone, setNoticeTone] = useState<"info" | "error">("info");
-  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [batches, setBatches] = useState<CreditBatch[]>([]);
+  const [claims, setClaims] = useState<PaymentClaim[]>([]);
 
+  const [payMethod, setPayMethod] = useState<PaymentMethod>("gcash");
+  const [buyKind, setBuyKind] = useState<"per_game" | "subscription">("per_game");
   const [buyScope, setBuyScope] = useState<AnnotationScope>("Single Team");
   const [buyQuantity, setBuyQuantity] = useState(1);
+  const [buyPackage, setBuyPackage] = useState<SubscriptionPackageKey>("rookie");
+  const [referenceNumber, setReferenceNumber] = useState("");
 
   async function refresh() {
     if (!user) return;
-    const [proj, creditBatches] = await Promise.all([getProjects(user.id), getCreditBatches(user.id)]);
+    const [proj, creditBatches, myClaims] = await Promise.all([
+      getProjects(user.id),
+      getCreditBatches(user.id),
+      getMyPaymentClaims(user.id),
+    ]);
     setProjects(proj);
     setBatches(creditBatches);
+    setClaims(myClaims);
   }
 
   useEffect(() => {
@@ -66,64 +93,35 @@ function BillingPageContent() {
     setTimeout(() => setNotice(null), 6000);
   }
 
-  // Handle the redirect back from Stripe Checkout. Unlike the old flow,
-  // this NEVER grants anything itself — credits are already recorded by
-  // the time this fires, via app/api/webhooks/stripe/route.ts verifying
-  // the payment server-side. This just shows a notice and refetches.
-  const processedCheckoutRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-    const checkout = searchParams.get("checkout");
-    if (!checkout) return;
-
-    const requestKey = searchParams.toString();
-    if (processedCheckoutRef.current === requestKey) return;
-    processedCheckoutRef.current = requestKey;
-
-    if (checkout === "success") {
-      flashNotice("Payment received — your credits will appear below shortly.");
-      refresh();
-    } else if (checkout === "cancelled") {
-      flashNotice("Checkout was cancelled — nothing was charged.");
-    }
-    router.replace("/client-portal/billing");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, searchParams]);
-
   const balance = useMemo(() => creditBalance(batches), [batches]);
+  const pendingClaims = useMemo(() => claims.filter((c) => c.status !== "approved"), [claims]);
 
-  async function startCheckout(key: string, body: object) {
-    setCheckoutLoading(key);
-    try {
-      const res = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.url) {
-        throw new Error(data.error || "Could not start checkout.");
-      }
-      window.location.href = data.url;
-    } catch (err) {
-      setCheckoutLoading(null);
-      const message = err instanceof Error ? err.message : "Could not start checkout.";
-      flashNotice(message, "error");
+  const buyTotal =
+    buyKind === "per_game" ? PER_GAME_PRICE_PHP[buyScope] * buyQuantity : SUBSCRIPTION_PACKAGES[buyPackage].pricePhp;
+
+  async function handleSubmitClaim() {
+    if (!user || referenceNumber.trim().length < 3) return;
+    setSubmitting(true);
+    const result = await submitPaymentClaim(user.id, {
+      kind: buyKind,
+      scope: buyKind === "per_game" ? buyScope : undefined,
+      quantity: buyKind === "per_game" ? buyQuantity : undefined,
+      package: buyKind === "subscription" ? buyPackage : undefined,
+      amountPhp: buyTotal,
+      paymentMethod: payMethod,
+      referenceNumber: referenceNumber.trim(),
+    });
+    setSubmitting(false);
+    if (!result.ok) {
+      flashNotice(result.error, "error");
+      return;
     }
-  }
-
-  function handleBuyGames() {
-    startCheckout("per_game", { kind: "per_game", scope: buyScope, quantity: buyQuantity });
-  }
-
-  function handleBuyPackage(key: SubscriptionPackageKey) {
-    startCheckout(key, { kind: "subscription", package: key });
+    setReferenceNumber("");
+    flashNotice("Submitted — we'll confirm your payment and add your credits shortly.");
+    await refresh();
   }
 
   if (!user) return null;
-
-  const buyTotal = PER_GAME_PRICE_PHP[buyScope] * buyQuantity;
 
   return (
     <div>
@@ -180,101 +178,154 @@ function BillingPageContent() {
 
       <div className="mt-10">
         <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-          BUY GAMES
+          PAY VIA E-WALLET
         </h2>
-        <div className="hs-panel sheen-top flex flex-col gap-4 p-5 sm:max-w-xl">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="buy-scope" className="hs-label">SCOPE</label>
-              <select
-                id="buy-scope"
-                className="hs-input"
-                value={buyScope}
-                onChange={(e) => setBuyScope(e.target.value as AnnotationScope)}
+        <div className="hs-panel sheen-top flex flex-col gap-5 p-5 sm:max-w-xl">
+          <div className="flex gap-2">
+            {(["per_game", "subscription"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setBuyKind(k)}
+                className={`hs-chip transition-colors ${buyKind === k ? "!border-orange/50 !text-orange-bright" : "text-text-faint"}`}
               >
-                {SCOPES.map((s) => (
-                  <option key={s} value={s}>
-                    {s} — {formatPhp(PER_GAME_PRICE_PHP[s])}/game
-                  </option>
-                ))}
+                {k === "per_game" ? "Per-game" : "Package"}
+              </button>
+            ))}
+          </div>
+
+          {buyKind === "per_game" ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="buy-scope" className="hs-label">SCOPE</label>
+                <select
+                  id="buy-scope"
+                  className="hs-input"
+                  value={buyScope}
+                  onChange={(e) => setBuyScope(e.target.value as AnnotationScope)}
+                >
+                  {SCOPES.map((s) => (
+                    <option key={s} value={s}>
+                      {s} — {formatPhp(PER_GAME_PRICE_PHP[s])}/game
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="buy-quantity" className="hs-label">QUANTITY</label>
+                <input
+                  id="buy-quantity"
+                  type="number"
+                  min={1}
+                  max={100}
+                  className="hs-input"
+                  value={buyQuantity}
+                  onChange={(e) => setBuyQuantity(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+                />
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label htmlFor="buy-package" className="hs-label">PACKAGE</label>
+              <select
+                id="buy-package"
+                className="hs-input"
+                value={buyPackage}
+                onChange={(e) => setBuyPackage(e.target.value as SubscriptionPackageKey)}
+              >
+                {SUBSCRIPTION_PACKAGE_ORDER.map((key) => {
+                  const info = SUBSCRIPTION_PACKAGES[key];
+                  return (
+                    <option key={key} value={key}>
+                      {info.label} — {formatPhp(info.pricePhp)} ({info.singleTeamCredits} single / {info.bothTeamCredits} both, expires {info.expiresInMonths}mo)
+                    </option>
+                  );
+                })}
               </select>
             </div>
-            <div>
-              <label htmlFor="buy-quantity" className="hs-label">QUANTITY</label>
-              <input
-                id="buy-quantity"
-                type="number"
-                min={1}
-                max={100}
-                className="hs-input"
-                value={buyQuantity}
-                onChange={(e) => setBuyQuantity(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
-              />
-            </div>
+          )}
+
+          <div>
+            <label htmlFor="pay-method" className="hs-label">PAY WITH</label>
+            <select
+              id="pay-method"
+              className="hs-input"
+              value={payMethod}
+              onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}
+            >
+              {PAYMENT_METHOD_ORDER.map((m) => (
+                <option key={m} value={m}>{PAYMENT_METHOD_LABELS[m]}</option>
+              ))}
+            </select>
           </div>
+
+          <div className="flex flex-col items-center gap-3 rounded-md border border-border bg-surface-light p-5 text-center">
+            <img
+              src={`/payment-qr/${payMethod}.png`}
+              alt={`${PAYMENT_METHOD_LABELS[payMethod]} QR code`}
+              className="h-48 w-48 rounded border border-border bg-white object-contain p-2"
+            />
+            <p className="font-mono-tech text-[0.62rem] tracking-[0.06em] text-text-faint">
+              Scan with {PAYMENT_METHOD_LABELS[payMethod]} and pay <span className="text-text">{formatPhp(buyTotal)}</span>,
+              then enter your payment reference number below.
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="reference-number" className="hs-label">PAYMENT REFERENCE NUMBER</label>
+            <input
+              id="reference-number"
+              className="hs-input"
+              placeholder="e.g. 1234567890123"
+              value={referenceNumber}
+              onChange={(e) => setReferenceNumber(e.target.value)}
+            />
+          </div>
+
           <div className="flex items-center justify-between border-t border-border pt-4">
             <p className="font-mono-tech text-[0.62rem] tracking-[0.08em] text-text-faint">
               TOTAL: <span className="text-text">{formatPhp(buyTotal)}</span>
             </p>
             <button
-              onClick={handleBuyGames}
-              disabled={checkoutLoading !== null}
+              onClick={handleSubmitClaim}
+              disabled={submitting || referenceNumber.trim().length < 3}
               className="hs-btn-primary disabled:cursor-wait disabled:opacity-70"
             >
-              {checkoutLoading === "per_game" ? "REDIRECTING TO STRIPE..." : "BUY"}
+              {submitting ? "SUBMITTING..." : "I'VE PAID — SUBMIT FOR REVIEW"}
             </button>
           </div>
         </div>
       </div>
 
-      <div className="mt-10">
-        <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-          SUBSCRIPTION PACKAGES
-        </h2>
-        <p className="mb-4 font-mono-tech text-[0.62rem] leading-relaxed text-text-faint">
-          A one-time bundle purchase — credits don&rsquo;t renew monthly, they
-          last until you use them all or they expire.
-        </p>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {SUBSCRIPTION_PACKAGE_ORDER.map((key) => {
-            const info = SUBSCRIPTION_PACKAGES[key];
-            const isLoading = checkoutLoading === key;
-            return (
-              <div key={key} className="hs-panel sheen-top flex flex-col p-6">
-                <h3 className="font-display text-lg font-semibold">{info.label}</h3>
-                <p className="mt-2 font-display text-2xl font-semibold text-orange-bright">
-                  {formatPhp(info.pricePhp)}
-                </p>
-                <ul className="mt-4 flex flex-1 flex-col gap-2">
-                  {info.singleTeamCredits > 0 && (
-                    <li className="flex items-start gap-2 text-xs text-text-muted">
-                      <span className="mt-0.5 flex-none text-orange">✓</span>
-                      {info.singleTeamCredits} Single Team games
-                    </li>
+      {pendingClaims.length > 0 && (
+        <div className="mt-10">
+          <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+            YOUR PAYMENT CLAIMS
+          </h2>
+          <div className="hs-panel sheen-top flex flex-col divide-y divide-border p-0">
+            {pendingClaims.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 p-4">
+                <div>
+                  <p className="text-sm text-text">
+                    {c.kind === "per_game" ? `${c.quantity}× ${c.scope}` : SUBSCRIPTION_PACKAGES[c.package!].label}
+                    {" — "}
+                    {formatPhp(c.amountPhp)}
+                  </p>
+                  <p className="mt-1 font-mono-tech text-[0.58rem] tracking-[0.06em] text-text-faint">
+                    {PAYMENT_METHOD_LABELS[c.paymentMethod]} · ref {c.referenceNumber} · {new Date(c.createdAt).toLocaleDateString()}
+                  </p>
+                  {c.status === "rejected" && c.adminNote && (
+                    <p className="mt-1 font-mono-tech text-[0.58rem] tracking-[0.06em] text-[#ff9b9b]">{c.adminNote}</p>
                   )}
-                  {info.bothTeamCredits > 0 && (
-                    <li className="flex items-start gap-2 text-xs text-text-muted">
-                      <span className="mt-0.5 flex-none text-orange">✓</span>
-                      {info.bothTeamCredits} Both Teams games
-                    </li>
-                  )}
-                  <li className="flex items-start gap-2 text-xs text-text-faint">
-                    <span className="mt-0.5 flex-none text-orange">✓</span>
-                    Expires {info.expiresInMonths} months after purchase
-                  </li>
-                </ul>
-                <button
-                  onClick={() => handleBuyPackage(key)}
-                  disabled={checkoutLoading !== null}
-                  className="hs-btn-primary mt-6 w-full disabled:cursor-wait disabled:opacity-70"
-                >
-                  {isLoading ? "REDIRECTING TO STRIPE..." : "BUY"}
-                </button>
+                </div>
+                <span className={`font-mono-tech text-[0.6rem] tracking-[0.1em] ${CLAIM_STATUS_STYLES[c.status]}`}>
+                  {c.status.toUpperCase()}
+                </span>
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="mt-10 mb-2">
         <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
@@ -308,13 +359,7 @@ function BillingPageContent() {
                           <p className="mt-1 font-mono-tech text-[0.56rem] tracking-[0.06em] text-text-faint">{b.note}</p>
                         )}
                       </td>
-                      <td className="p-4 text-text">
-                        {b.source === "per_game"
-                          ? "Per-game"
-                          : b.source === "manual_grant"
-                            ? "Manual grant"
-                            : SUBSCRIPTION_PACKAGES[b.source as SubscriptionPackageKey]?.label ?? b.source}
-                      </td>
+                      <td className="p-4 text-text">{sourceLabel(b.source)}</td>
                       <td className="p-4 text-text-muted">{b.scope}</td>
                       <td className="p-4 font-mono-tech text-text-muted">{b.quantityTotal}</td>
                       <td className="p-4 font-mono-tech text-orange-bright">{b.quantityRemaining}</td>
@@ -330,13 +375,5 @@ function BillingPageContent() {
         </div>
       </div>
     </div>
-  );
-}
-
-export default function BillingPage() {
-  return (
-    <Suspense fallback={null}>
-      <BillingPageContent />
-    </Suspense>
   );
 }

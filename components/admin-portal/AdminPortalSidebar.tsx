@@ -31,6 +31,13 @@ const ICONS = {
       <path d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3M18.4 5.6l-1.5 1.5M7.1 16.9l-1.5 1.5M18.4 18.4l-1.5-1.5M7.1 7.1 5.6 5.6" />
     </>
   ),
+  wallet: (
+    <>
+      <rect x="3" y="6" width="18" height="13" rx="1.8" />
+      <path d="M3 10h18" />
+      <circle cx="16.5" cy="14.2" r="1.1" fill="currentColor" stroke="none" />
+    </>
+  ),
 };
 
 function NavIcon({ name }: { name: keyof typeof ICONS }) {
@@ -54,6 +61,7 @@ const NAV: { label: string; href: string; exact?: boolean; icon: keyof typeof IC
   { label: "Dashboard", href: "/admin-portal", exact: true, icon: "grid" },
   { label: "Users", href: "/admin-portal/users", icon: "users" },
   { label: "Projects", href: "/admin-portal/projects", icon: "folder" },
+  { label: "Payments", href: "/admin-portal/payments", icon: "wallet" },
   { label: "Account Settings", href: "/admin-portal/settings", icon: "gear" },
 ];
 
