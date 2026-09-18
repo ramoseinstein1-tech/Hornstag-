@@ -302,8 +302,19 @@ function BillingPageContent() {
                 ) : (
                   batches.map((b) => (
                     <tr key={b.id} className="border-b border-border/60 last:border-0">
-                      <td className="p-4 text-text-muted">{new Date(b.createdAt).toLocaleDateString()}</td>
-                      <td className="p-4 text-text">{b.source === "per_game" ? "Per-game" : SUBSCRIPTION_PACKAGES[b.source as SubscriptionPackageKey]?.label ?? b.source}</td>
+                      <td className="p-4 text-text-muted">
+                        {new Date(b.createdAt).toLocaleDateString()}
+                        {b.note && (
+                          <p className="mt-1 font-mono-tech text-[0.56rem] tracking-[0.06em] text-text-faint">{b.note}</p>
+                        )}
+                      </td>
+                      <td className="p-4 text-text">
+                        {b.source === "per_game"
+                          ? "Per-game"
+                          : b.source === "manual_grant"
+                            ? "Manual grant"
+                            : SUBSCRIPTION_PACKAGES[b.source as SubscriptionPackageKey]?.label ?? b.source}
+                      </td>
                       <td className="p-4 text-text-muted">{b.scope}</td>
                       <td className="p-4 font-mono-tech text-text-muted">{b.quantityTotal}</td>
                       <td className="p-4 font-mono-tech text-orange-bright">{b.quantityRemaining}</td>

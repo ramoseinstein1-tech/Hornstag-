@@ -13,8 +13,10 @@ import {
 } from "@/lib/auth/supabaseAuth";
 import type { UserRole } from "@/lib/auth/types";
 import { formatRelativeTime, type AnnotationScope } from "@/lib/portal/store";
-import { getCreditBatches, creditBalance } from "@/lib/portal/billing";
+import { getCreditBatches, creditBalance, grantGameCreditsManually } from "@/lib/portal/billing";
 import { deleteUserData as deleteSettingsData } from "@/lib/portal/settings";
+
+const GRANT_SCOPES: AnnotationScope[] = ["Single Team", "Both Teams"];
 
 type Filter = "all" | "client" | "annotator" | "admin";
 
@@ -28,6 +30,11 @@ export default function AdminUsersPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [deleteTarget, setDeleteTarget] = useState<AdminUserSummary | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [grantTarget, setGrantTarget] = useState<AdminUserSummary | null>(null);
+  const [grantScope, setGrantScope] = useState<AnnotationScope>("Single Team");
+  const [grantQuantity, setGrantQuantity] = useState(1);
+  const [grantReason, setGrantReason] = useState("");
+  const [grantSubmitting, setGrantSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
@@ -82,6 +89,23 @@ export default function AdminUsersPage() {
 
     setDeleteTarget(null);
     setDeleteConfirm("");
+    await loadUsers();
+  }
+
+  async function handleGrant() {
+    if (!grantTarget || grantReason.trim().length < 3) return;
+    setError(null);
+    setGrantSubmitting(true);
+    const result = await grantGameCreditsManually(grantTarget.id, grantScope, grantQuantity, grantReason);
+    setGrantSubmitting(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setGrantTarget(null);
+    setGrantScope("Single Team");
+    setGrantQuantity(1);
+    setGrantReason("");
     await loadUsers();
   }
 
@@ -178,17 +202,33 @@ export default function AdminUsersPage() {
                           : "—"}
                       </td>
                       <td className="px-5 py-3 text-right">
-                        <button
-                          type="button"
-                          disabled={isSelf}
-                          onClick={() => {
-                            setDeleteTarget(u);
-                            setDeleteConfirm("");
-                          }}
-                          className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-[#ff9b9b] transition-colors hover:text-[#ff6b6b] disabled:cursor-not-allowed disabled:opacity-30"
-                        >
-                          DELETE
-                        </button>
+                        <div className="flex justify-end gap-4">
+                          {u.role === "client" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setGrantTarget(u);
+                                setGrantScope("Single Team");
+                                setGrantQuantity(1);
+                                setGrantReason("");
+                              }}
+                              className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-orange-bright transition-colors hover:text-orange"
+                            >
+                              GRANT
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isSelf}
+                            onClick={() => {
+                              setDeleteTarget(u);
+                              setDeleteConfirm("");
+                            }}
+                            className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-[#ff9b9b] transition-colors hover:text-[#ff6b6b] disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            DELETE
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -230,6 +270,71 @@ export default function AdminUsersPage() {
                 style={{ borderColor: "rgba(255,107,107,0.4)" }}
               >
                 PERMANENTLY DELETE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {grantTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm">
+          <div className="hs-panel w-full max-w-md p-6" style={{ borderColor: "var(--border-orange)" }}>
+            <h2 className="mb-2 font-mono-tech text-[0.66rem] tracking-[0.2em] text-orange-bright">GRANT GAME CREDITS</h2>
+            <p className="mb-4 text-sm leading-relaxed text-text-muted">
+              Manually granting credits to <span className="text-text">{grantTarget.name}</span> — for fixing a
+              failed webhook after a real payment, not a substitute for a real purchase. Visible to them on their
+              Billing page with the reason below.
+            </p>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="grant-scope" className="hs-label">SCOPE</label>
+                <select
+                  id="grant-scope"
+                  className="hs-input"
+                  value={grantScope}
+                  onChange={(e) => setGrantScope(e.target.value as AnnotationScope)}
+                >
+                  {GRANT_SCOPES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="grant-quantity" className="hs-label">QUANTITY</label>
+                <input
+                  id="grant-quantity"
+                  type="number"
+                  min={1}
+                  max={1000}
+                  className="hs-input"
+                  value={grantQuantity}
+                  onChange={(e) => setGrantQuantity(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label htmlFor="grant-reason" className="hs-label">REASON (REQUIRED)</label>
+              <textarea
+                id="grant-reason"
+                className="hs-input min-h-[70px] resize-y"
+                placeholder="e.g. Paid for 5 Single Team games (Stripe session cs_...), webhook failed to grant credits."
+                value={grantReason}
+                onChange={(e) => setGrantReason(e.target.value)}
+              />
+            </div>
+
+            <div className="mt-4 flex justify-end gap-3">
+              <button onClick={() => setGrantTarget(null)} className="hs-btn-ghost">
+                CANCEL
+              </button>
+              <button
+                onClick={handleGrant}
+                disabled={grantReason.trim().length < 3 || grantSubmitting}
+                className="hs-btn-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {grantSubmitting ? "GRANTING..." : "GRANT CREDITS"}
               </button>
             </div>
           </div>

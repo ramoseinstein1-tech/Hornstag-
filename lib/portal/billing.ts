@@ -69,6 +69,10 @@ export type CreditBatch = {
   source: string;
   expiresAt?: string;
   createdAt: string;
+  /** Only set for an admin's manual grant (the webhook-failure safety
+   * valve) — explains why, shown in both the admin Users page and the
+   * client's own Purchase History. Undefined for a real purchase. */
+  note?: string;
 };
 
 type CreditBatchRow = {
@@ -79,6 +83,7 @@ type CreditBatchRow = {
   source: string;
   expires_at: string | null;
   created_at: string;
+  note: string | null;
 };
 
 function mapBatchRow(row: CreditBatchRow): CreditBatch {
@@ -90,7 +95,28 @@ function mapBatchRow(row: CreditBatchRow): CreditBatch {
     source: row.source,
     expiresAt: row.expires_at ?? undefined,
     createdAt: row.created_at,
+    note: row.note ?? undefined,
   };
+}
+
+/** Admin-only: manually grants credits to a client — the safety valve
+ * for when the Stripe webhook fails to grant a real payment's credits.
+ * Enforced server-side (app/api/admin/grant-credits); this is just a
+ * thin fetch wrapper. */
+export async function grantGameCreditsManually(
+  ownerId: string,
+  scope: AnnotationScope,
+  quantity: number,
+  reason: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch("/api/admin/grant-credits", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ownerId, scope, quantity, reason }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: data.error ?? "Couldn't grant credits." };
+  return { ok: true };
 }
 
 /** Every credit batch the CALLER owns — RLS restricts this to the
