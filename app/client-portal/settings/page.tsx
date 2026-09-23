@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { updateProfileName, changePassword, deleteOwnAccount, clearSession } from "@/lib/auth/supabaseAuth";
+import RosterEditor from "@/components/RosterEditor";
 import {
   getSettings,
   addTeamMember,
@@ -13,6 +14,9 @@ import {
   deleteUserData as deleteSettingsData,
 } from "@/lib/portal/settings";
 import type { NotificationPrefs } from "@/lib/portal/settings";
+import { createSavedTeam, deleteSavedTeam, getSavedTeams } from "@/lib/portal/savedTeams";
+import type { SavedTeam } from "@/lib/portal/savedTeams";
+import type { RosterPlayer } from "@/lib/portal/store";
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -71,6 +75,19 @@ export default function AccountSettingsPage() {
 
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteArmed, setDeleteArmed] = useState(false);
+
+  const [savedTeams, setSavedTeams] = useState<SavedTeam[]>([]);
+  const [addingTeam, setAddingTeam] = useState(false);
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamRoster, setNewTeamRoster] = useState<RosterPlayer[]>([
+    { id: crypto.randomUUID(), number: "", name: "" },
+  ]);
+  const [teamSaving, setTeamSaving] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    getSavedTeams(user.id).then(setSavedTeams);
+  }, [user]);
 
   const settings = useMemo(
     () => (user ? getSettings(user.id, { name: user.name, email: user.email }) : null),
@@ -147,6 +164,30 @@ export default function AccountSettingsPage() {
     if (!user) return;
     removeTeamMember(user.id, { name: user.name, email: user.email }, id);
     setRefreshKey((k) => k + 1);
+  }
+
+  async function handleSaveTeam() {
+    if (!user || !newTeamName.trim()) return;
+    const validRoster = newTeamRoster.filter((p) => p.number.trim() && p.name.trim());
+    if (validRoster.length === 0) return;
+
+    setTeamSaving(true);
+    const result = await createSavedTeam(user.id, newTeamName.trim(), validRoster);
+    setTeamSaving(false);
+    if (!result.ok) {
+      flashNotice(result.error, "error");
+      return;
+    }
+    setNewTeamName("");
+    setNewTeamRoster([{ id: crypto.randomUUID(), number: "", name: "" }]);
+    setAddingTeam(false);
+    getSavedTeams(user.id).then(setSavedTeams);
+    flashNotice("Team saved.");
+  }
+
+  async function handleDeleteTeam(teamId: string) {
+    await deleteSavedTeam(teamId);
+    setSavedTeams((prev) => prev.filter((t) => t.id !== teamId));
   }
 
   async function handleDeleteAccount() {
@@ -306,6 +347,75 @@ export default function AccountSettingsPage() {
             </div>
             <button type="submit" className="hs-btn-secondary w-fit">INVITE MEMBER</button>
           </form>
+        </SectionCard>
+
+        <SectionCard title="MY TEAMS">
+          <p className="-mt-2 mb-4 text-xs leading-relaxed text-text-faint">
+            Save your own roster once and reuse it on every future upload.
+          </p>
+          {savedTeams.length > 0 && (
+            <ul className="mb-5 flex flex-col divide-y divide-border">
+              {savedTeams.map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-3 py-3 first:pt-0">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-text">{t.name}</p>
+                    <p className="truncate font-mono-tech text-[0.6rem] tracking-[0.06em] text-text-faint">
+                      {t.roster.length} PLAYER{t.roster.length === 1 ? "" : "S"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteTeam(t.id)}
+                    aria-label={`Delete ${t.name}`}
+                    className="flex-none text-text-faint transition-colors hover:text-[#ff6b6b]"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {addingTeam ? (
+            <div className="flex flex-col gap-4 border-t border-border pt-5">
+              <div>
+                <label htmlFor="new-team-name" className="hs-label">TEAM NAME</label>
+                <input
+                  id="new-team-name"
+                  className="hs-input"
+                  placeholder="Hornstag Varsity"
+                  value={newTeamName}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                />
+              </div>
+              <RosterEditor label="ROSTER" players={newTeamRoster} onChange={setNewTeamRoster} />
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={handleSaveTeam}
+                  disabled={teamSaving}
+                  className="hs-btn-secondary w-fit disabled:opacity-60"
+                >
+                  {teamSaving ? "SAVING..." : "SAVE TEAM"}
+                </button>
+                <button
+                  onClick={() => {
+                    setAddingTeam(false);
+                    setNewTeamName("");
+                    setNewTeamRoster([{ id: crypto.randomUUID(), number: "", name: "" }]);
+                  }}
+                  className="hs-btn-ghost"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAddingTeam(true)}
+              className="font-mono-tech text-[0.66rem] tracking-[0.14em] text-orange-bright transition-colors hover:text-orange"
+            >
+              + ADD A TEAM
+            </button>
+          )}
         </SectionCard>
 
         <SectionCard title="SECURITY">
