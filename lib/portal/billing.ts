@@ -121,12 +121,13 @@ export async function grantGameCreditsManually(
   ownerId: string,
   scope: AnnotationScope,
   quantity: number,
-  reason: string
+  reason: string,
+  kind: AnnotationKind = "traditional"
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const res = await fetch("/api/admin/grant-credits", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ownerId, scope, quantity, reason }),
+    body: JSON.stringify({ ownerId, scope, quantity, reason, kind }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, error: data.error ?? "Couldn't grant credits." };

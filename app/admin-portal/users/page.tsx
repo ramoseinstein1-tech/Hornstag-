@@ -12,7 +12,7 @@ import {
   type AnnotatorInvite,
 } from "@/lib/auth/supabaseAuth";
 import type { UserRole } from "@/lib/auth/types";
-import { formatRelativeTime, type AnnotationScope } from "@/lib/portal/store";
+import { formatRelativeTime, type AnnotationKind, type AnnotationScope } from "@/lib/portal/store";
 import { getCreditBatches, creditBalance, grantGameCreditsManually } from "@/lib/portal/billing";
 import { deleteUserData as deleteSettingsData } from "@/lib/portal/settings";
 
@@ -26,11 +26,13 @@ export default function AdminUsersPage() {
   const { user: me } = useAuth();
   const [users, setUsers] = useState<AdminUserSummary[]>([]);
   const [credits, setCredits] = useState<Map<string, Record<AnnotationScope, number>>>(new Map());
+  const [heartStatsCredits, setHeartStatsCredits] = useState<Map<string, Record<AnnotationScope, number>>>(new Map());
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [deleteTarget, setDeleteTarget] = useState<AdminUserSummary | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [grantTarget, setGrantTarget] = useState<AdminUserSummary | null>(null);
+  const [grantKind, setGrantKind] = useState<AnnotationKind>("traditional");
   const [grantScope, setGrantScope] = useState<AnnotationScope>("Single Team");
   const [grantQuantity, setGrantQuantity] = useState(1);
   const [grantReason, setGrantReason] = useState("");
@@ -43,10 +45,9 @@ export default function AdminUsersPage() {
     setLoading(false);
 
     const clients = list.filter((u) => u.role === "client");
-    const entries = await Promise.all(
-      clients.map(async (u) => [u.id, creditBalance(await getCreditBatches(u.id))] as const)
-    );
-    setCredits(new Map(entries));
+    const batchesByUser = await Promise.all(clients.map(async (u) => [u.id, await getCreditBatches(u.id)] as const));
+    setCredits(new Map(batchesByUser.map(([id, batches]) => [id, creditBalance(batches, "traditional")])));
+    setHeartStatsCredits(new Map(batchesByUser.map(([id, batches]) => [id, creditBalance(batches, "heart_stats")])));
   }, []);
 
   useEffect(() => {
@@ -96,13 +97,14 @@ export default function AdminUsersPage() {
     if (!grantTarget || grantReason.trim().length < 3) return;
     setError(null);
     setGrantSubmitting(true);
-    const result = await grantGameCreditsManually(grantTarget.id, grantScope, grantQuantity, grantReason);
+    const result = await grantGameCreditsManually(grantTarget.id, grantScope, grantQuantity, grantReason, grantKind);
     setGrantSubmitting(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
     setGrantTarget(null);
+    setGrantKind("traditional");
     setGrantScope("Single Team");
     setGrantQuantity(1);
     setGrantReason("");
@@ -154,20 +156,21 @@ export default function AdminUsersPage() {
                 <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">ROLE</th>
                 <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">JOINED</th>
                 <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">CREDITS (SINGLE/BOTH)</th>
+                <th className="px-3 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint">HEART STATS (SINGLE/BOTH)</th>
                 <th className="px-5 py-3 font-mono-tech text-[0.58rem] font-normal tracking-[0.1em] text-text-faint text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-8 text-center text-text-faint">
+                  <td colSpan={6} className="px-5 py-8 text-center text-text-faint">
                     Loading…
                   </td>
                 </tr>
               )}
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-8 text-center text-text-faint">
+                  <td colSpan={6} className="px-5 py-8 text-center text-text-faint">
                     No users match this filter.
                   </td>
                 </tr>
@@ -201,6 +204,11 @@ export default function AdminUsersPage() {
                           ? `${credits.get(u.id)?.["Single Team"] ?? 0} / ${credits.get(u.id)?.["Both Teams"] ?? 0}`
                           : "—"}
                       </td>
+                      <td className="px-3 py-3 text-text-muted">
+                        {u.role === "client"
+                          ? `${heartStatsCredits.get(u.id)?.["Single Team"] ?? 0} / ${heartStatsCredits.get(u.id)?.["Both Teams"] ?? 0}`
+                          : "—"}
+                      </td>
                       <td className="px-5 py-3 text-right">
                         <div className="flex justify-end gap-4">
                           {u.role === "client" && (
@@ -208,6 +216,7 @@ export default function AdminUsersPage() {
                               type="button"
                               onClick={() => {
                                 setGrantTarget(u);
+                                setGrantKind("traditional");
                                 setGrantScope("Single Team");
                                 setGrantQuantity(1);
                                 setGrantReason("");
@@ -285,6 +294,26 @@ export default function AdminUsersPage() {
               failed webhook after a real payment, not a substitute for a real purchase. Visible to them on their
               Billing page with the reason below.
             </p>
+
+            <div className="mb-4">
+              <span className="hs-label">ANNOTATION TYPE</span>
+              <div className="grid grid-cols-2 gap-2">
+                {(["traditional", "heart_stats"] as AnnotationKind[]).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setGrantKind(k)}
+                    className={`rounded-md border px-3 py-2 text-sm font-medium transition-all duration-300 ${
+                      grantKind === k
+                        ? "border-orange/50 bg-orange/10 text-orange-bright"
+                        : "border-border bg-transparent text-text-muted hover:border-border-strong"
+                    }`}
+                  >
+                    {k === "traditional" ? "Traditional" : "Heart Stats"}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>

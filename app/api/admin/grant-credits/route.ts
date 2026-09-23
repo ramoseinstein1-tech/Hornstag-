@@ -14,7 +14,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * both the admin Users page and the client's own Purchase History.
  */
 export async function POST(request: Request) {
-  const { ownerId, scope, quantity, reason } = await request.json();
+  const { ownerId, scope, quantity, reason, kind } = await request.json();
 
   if (!ownerId || typeof ownerId !== "string") {
     return NextResponse.json({ error: "Missing ownerId." }, { status: 400 });
@@ -29,6 +29,7 @@ export async function POST(request: Request) {
   if (!reason || typeof reason !== "string" || reason.trim().length < 3) {
     return NextResponse.json({ error: "A reason is required for a manual grant." }, { status: 400 });
   }
+  const annotationKind = kind === "heart_stats" ? "heart_stats" : "traditional";
 
   const supabase = await createClient();
   const {
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
     p_stripe_session_id: `manual-${crypto.randomUUID()}`,
     p_note: reason.trim(),
     p_granted_by: caller.id,
+    p_kind: annotationKind,
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
