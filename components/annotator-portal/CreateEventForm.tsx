@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Project } from "@/lib/portal/store";
 import {
@@ -141,6 +141,39 @@ export default function CreateEventForm({
   const isShotType = eventType !== "" && SHOT_EVENT_TYPES.includes(eventType);
   const isTeamless = eventType !== "" && TEAMLESS_EVENT_TYPES.includes(eventType);
 
+  // Always points at the current render's submitEvent — the keydown
+  // listener below is only re-attached when isShotType changes, so
+  // without this it would keep calling a stale closure over whatever
+  // timestamp/player/etc. the form held at that point, not the current
+  // values as the annotator keeps filling it in.
+  const submitEventRef = useRef<() => Promise<void>>(async () => {});
+
+  // Q/R/W tagging hotkeys — Q and R both just submit (same logic the
+  // SAVE EVENT button calls); they're two entry points distinguished by
+  // which one matches the currently-selected event type, not two
+  // different actions. W toggles the "Successful" checkbox, which is
+  // only rendered for shot types today — Heart Stats' Box Out event
+  // reuses this same checkbox/state, so W will apply there too once
+  // that's added. Ignored while focus is in a text input/textarea/select
+  // so typing in the custom-label field is never hijacked.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+      const key = e.key.toLowerCase();
+      if ((key === "q" && !isShotType) || (key === "r" && isShotType)) {
+        e.preventDefault();
+        void submitEventRef.current();
+      } else if (key === "w" && isShotType) {
+        e.preventDefault();
+        setMade((prev) => !prev);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isShotType]);
+
   function resetForm() {
     setEventType(emptyState.eventType);
     setPlayerId(emptyState.playerId);
@@ -152,8 +185,15 @@ export default function CreateEventForm({
     setError(null);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    void submitEvent();
+  }
+
+  // The actual submission logic, split out from handleSubmit so the Q/R
+  // hotkeys (which have no real form-submit event to prevent-default on)
+  // can call it directly.
+  async function submitEvent() {
     setError(null);
 
     const seconds = parseHHMMSS(timestampInput);
@@ -196,6 +236,7 @@ export default function CreateEventForm({
     if (editingEvent) onCancelEdit();
     resetForm();
   }
+  submitEventRef.current = submitEvent;
 
   return (
     <form onSubmit={handleSubmit} className="hs-panel sheen-top flex flex-col gap-4 p-5">

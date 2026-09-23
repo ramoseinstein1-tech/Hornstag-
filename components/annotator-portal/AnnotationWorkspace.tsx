@@ -127,6 +127,34 @@ export default function AnnotationWorkspace({
       : "Submitted for review — no further edits until QA responds.";
   const tabs = readOnly ? TABS.filter((t) => t.key !== "roster" && t.key !== "segments") : TABS;
 
+  // Space/A/D video-control hotkeys — only while actively tagging (the
+  // Annotate tab, not read-only). Q/R/W (submit event / toggle
+  // successful) live in CreateEventForm itself, since that's what owns
+  // that form's state. Ignored entirely while focus is in a text
+  // input/textarea/select, so typing in the custom-label field or
+  // anywhere else never gets hijacked.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (tab !== "annotate" || readOnly) return;
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+      const player = videoRef.current;
+      if (!player) return;
+
+      if (e.key === " ") {
+        e.preventDefault();
+        player.togglePlay();
+      } else if (e.key.toLowerCase() === "a") {
+        player.seekTo(Math.max(0, player.getCurrentTime() - 5));
+      } else if (e.key.toLowerCase() === "d") {
+        player.seekTo(player.getCurrentTime() + 5);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [tab, readOnly]);
+
   const teamScore = useMemo(
     () => events.filter((e) => e.teamSide === "team").reduce((sum, e) => sum + pointsForEvent(e), 0),
     [events]

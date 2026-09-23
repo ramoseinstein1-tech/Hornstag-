@@ -5,6 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 export type VideoPlayerHandle = {
   seekTo: (seconds: number) => void;
   getCurrentTime: () => number;
+  togglePlay: () => void;
 };
 
 function formatTime(seconds: number): string {
@@ -39,6 +40,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, {
     },
     getCurrentTime() {
       return videoRef.current?.currentTime ?? 0;
+    },
+    togglePlay() {
+      togglePlay();
     },
   }));
 
