@@ -31,6 +31,13 @@ export type RosterPlayer = {
   id: string;
   number: string;
   name: string;
+  /** Set only when this player was loaded from a saved team (see
+   * lib/portal/savedTeams.ts) — points back at the saved_team_players
+   * row, so the same person's stats can be summed across every project
+   * they're loaded into for a career profile. Absent for a player typed
+   * in fresh for one game, or for any opponent (opponents are never
+   * saved). */
+  savedPlayerId?: string;
 };
 
 export type OfficialScore = {
@@ -90,7 +97,15 @@ export type ActivityEntry = {
   time: string;
 };
 
-type RosterRow = { id: string; project_id: string; side: "team" | "opponent"; number: string; name: string; sort_order: number };
+type RosterRow = {
+  id: string;
+  project_id: string;
+  side: "team" | "opponent";
+  number: string;
+  name: string;
+  sort_order: number;
+  saved_player_id: string | null;
+};
 
 type ProjectRow = {
   id: string;
@@ -128,7 +143,7 @@ function toRosterPlayers(rows: RosterRow[], side: "team" | "opponent"): RosterPl
   return rows
     .filter((r) => r.side === side)
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((r) => ({ id: r.id, number: r.number, name: r.name }));
+    .map((r) => ({ id: r.id, number: r.number, name: r.name, savedPlayerId: r.saved_player_id ?? undefined }));
 }
 
 function mapProjectRow(row: ProjectRow): Project {
@@ -451,8 +466,19 @@ export async function updateRoster(
 
   await supabase.from("roster_players").delete().eq("project_id", projectId).eq("side", "team");
   if (roster.length > 0) {
+    // Carries savedPlayerId through the delete+reinsert — otherwise an
+    // annotator fixing a jersey number typo here would silently sever
+    // that player's link to their saved-team career stats.
     await supabase.from("roster_players").insert(
-      roster.map((p, i) => ({ id: p.id, project_id: projectId, side: "team", number: p.number, name: p.name, sort_order: i }))
+      roster.map((p, i) => ({
+        id: p.id,
+        project_id: projectId,
+        side: "team",
+        number: p.number,
+        name: p.name,
+        sort_order: i,
+        saved_player_id: p.savedPlayerId ?? null,
+      }))
     );
   }
 
@@ -538,7 +564,15 @@ export async function createProject(
 
   if (input.roster.length > 0) {
     await supabase.from("roster_players").insert(
-      input.roster.map((p, i) => ({ id: p.id, project_id: projectRow.id, side: "team", number: p.number, name: p.name, sort_order: i }))
+      input.roster.map((p, i) => ({
+        id: p.id,
+        project_id: projectRow.id,
+        side: "team",
+        number: p.number,
+        name: p.name,
+        sort_order: i,
+        saved_player_id: p.savedPlayerId ?? null,
+      }))
     );
   }
   if (input.opponentRoster && input.opponentRoster.length > 0) {

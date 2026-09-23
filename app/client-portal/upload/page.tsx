@@ -69,7 +69,11 @@ export default function UploadProjectPage() {
   function loadSavedTeam(teamId: string) {
     setSelectedSavedTeamId(teamId);
     const team = savedTeams.find((t) => t.id === teamId);
-    if (team) setRoster(team.roster.map((p) => ({ ...p, id: crypto.randomUUID() })));
+    // p.id here IS the saved_team_players id — captured as savedPlayerId
+    // before being overwritten with a fresh id for this project's own
+    // roster_players row, so this player's career stats can find every
+    // project they've ever been loaded into.
+    if (team) setRoster(team.roster.map((p) => ({ ...p, savedPlayerId: p.id, id: crypto.randomUUID() })));
   }
 
   function validate(): Errors {
