@@ -81,36 +81,22 @@ export default function AnnotationWorkspace({
   const [playerSeekTarget, setPlayerSeekTarget] = useState<number | undefined>(undefined);
   const [cuttingProgress, setCuttingProgress] = useState<ClipProgress | null>(null);
   const [cuttingError, setCuttingError] = useState<string | null>(null);
+  // Flips true once a cutting attempt (this session) has resolved,
+  // whether or not every clip actually succeeded — a permanently-failed
+  // segment still falls back to the full video, and shouldn't lock the
+  // Annotate tab forever. False after every fresh segment save, since
+  // saveSegments() drops any old clip_path values.
+  const [cuttingSettled, setCuttingSettled] = useState(false);
+  const cuttingInFlightRef = useRef(false);
+  // Guards the auto-resume effect below so it only ever fires once per
+  // mount — without it, a segment that keeps permanently failing would
+  // get re-cut in an infinite loop every time cutting settles and
+  // refreshes `segments`. A deliberate re-save from the SEGMENTS tab
+  // bypasses this (handleSaveSegments calls runCutting directly).
+  const hasAttemptedCuttingRef = useRef(false);
   const [videoIssues, setVideoIssues] = useState<VideoIssue[]>([]);
   const clipUrlCacheRef = useRef<Map<string, string>>(new Map());
   const { user } = useAuth();
-
-  // The SEGMENTS tab always needs the full video (marking period
-  // boundaries requires scrubbing the whole thing) — only the ANNOTATE
-  // tab ever loads a clip.
-  const effectiveActiveClip = tab === "annotate" ? activeClip : null;
-  const effectiveSrc = tab === "segments" ? videoUrl : (playerSrc ?? videoUrl);
-
-  useEffect(() => {
-    getEvents(project.id).then(setEvents);
-    getSegments(project.id).then((s) => {
-      setSegments(s);
-      setTab(s ? "annotate" : "segments");
-    });
-    // A cleared source (deleted once every period had a real clip — see
-    // lib/portal/pipeline.ts's approveAndComplete) has no videoPath
-    // either, same as a project that never had a real upload — skip the
-    // call so a reopened project doesn't fall back to the unrelated
-    // sample clip and look like real footage.
-    if (!project.videoCleared) {
-      getProjectVideoUrl(project).then((url) => {
-        setVideoUrl(url);
-        setPlayerSrc(url);
-      });
-    }
-    getVideoIssues(project.id).then(setVideoIssues);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id]);
 
   // "Claimed" and "Correction Required" are the only statuses the
   // annotator can still edit under — matching exactly what the
@@ -126,6 +112,92 @@ export default function AnnotationWorkspace({
       ? "This match has been reviewed and completed — no further edits."
       : "Submitted for review — no further edits until QA responds.";
   const tabs = readOnly ? TABS.filter((t) => t.key !== "roster" && t.key !== "segments") : TABS;
+
+  // Real video, segments known, and at least one period still has no
+  // cut clip — the condition the annotator must wait out before tagging.
+  const clipsPending =
+    !!currentProject.videoPath && segments !== null && segments.length > 0 && segments.some((s) => !s.clipPath);
+  // Safe to show the Annotate tab: either there's nothing left to cut
+  // (no real video, or every clip already exists) or a cutting attempt
+  // has already settled this session (see cuttingSettled above).
+  const canEnterAnnotate = segments !== null && (readOnly || !clipsPending || cuttingSettled);
+
+  async function runCutting(segs: VideoSegment[]) {
+    if (!currentProject.videoPath || cuttingInFlightRef.current) return;
+    cuttingInFlightRef.current = true;
+    hasAttemptedCuttingRef.current = true;
+    setCuttingError(null);
+    try {
+      const result = await cutProjectIntoClips(currentProject, segs, (progress) => {
+        setCuttingProgress(progress.index < progress.total ? progress : null);
+      });
+      if (!result.ok) {
+        setCuttingError(result.error);
+      } else if (result.failedLabels.length > 0) {
+        const detail = result.firstFailureDetail ? ` (${result.firstFailureDetail})` : "";
+        setCuttingError(
+          `Cut ${result.cutCount} of ${segs.length} clips — ${result.failedLabels.join(", ")} failed${detail} and will use the full video instead.`
+        );
+      }
+      setSegments(await getSegments(currentProject.id));
+    } catch (err) {
+      console.error("cutProjectIntoClips rejected unexpectedly:", err);
+      setCuttingError(err instanceof Error ? err.message : "Cutting into clips failed unexpectedly.");
+    } finally {
+      cuttingInFlightRef.current = false;
+      setCuttingSettled(true);
+    }
+  }
+
+  // Auto-resumes cutting for a project reopened after a previous session
+  // was interrupted mid-cut (browser closed, tab navigated away — see
+  // lib/portal/videoClips.ts, this all runs client-side in the
+  // annotator's own browser). Without this, segments with no clip_path
+  // from an abandoned run would leave the Annotate tab locked forever
+  // with nothing actually retrying it.
+  useEffect(() => {
+    if (readOnly || !segments || !currentProject.videoPath) return;
+    if (hasAttemptedCuttingRef.current) return;
+    if (segments.some((s) => !s.clipPath)) {
+      void runCutting(segments);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segments, readOnly]);
+
+  // The whole point: never land the annotator on the Annotate tab's
+  // content until cutting is actually done (or wasn't needed at all) —
+  // covers first load, right after saving segments, and right after an
+  // auto-resumed cut finishes, in one place.
+  useEffect(() => {
+    if (tab === "segments" && canEnterAnnotate) {
+      setTab("annotate");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEnterAnnotate]);
+
+  // The SEGMENTS tab always needs the full video (marking period
+  // boundaries requires scrubbing the whole thing) — only the ANNOTATE
+  // tab ever loads a clip.
+  const effectiveActiveClip = tab === "annotate" ? activeClip : null;
+  const effectiveSrc = tab === "segments" ? videoUrl : (playerSrc ?? videoUrl);
+
+  useEffect(() => {
+    getEvents(project.id).then(setEvents);
+    getSegments(project.id).then(setSegments);
+    // A cleared source (deleted once every period had a real clip — see
+    // lib/portal/pipeline.ts's approveAndComplete) has no videoPath
+    // either, same as a project that never had a real upload — skip the
+    // call so a reopened project doesn't fall back to the unrelated
+    // sample clip and look like real footage.
+    if (!project.videoCleared) {
+      getProjectVideoUrl(project).then((url) => {
+        setVideoUrl(url);
+        setPlayerSrc(url);
+      });
+    }
+    getVideoIssues(project.id).then(setVideoIssues);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
 
   // Space/A/D video-control hotkeys — only while actively tagging (the
   // Annotate tab, not read-only). Q/R/W (submit event / toggle
@@ -203,29 +275,13 @@ export default function AnnotationWorkspace({
     setActiveSegmentIndex(0);
     setActiveClip(null);
     setPlayerSrc(videoUrl);
-    setTab("annotate");
-
-    if (currentProject.videoPath) {
-      setCuttingError(null);
-      cutProjectIntoClips(currentProject, newSegments, (progress) => {
-        setCuttingProgress(progress.index < progress.total ? progress : null);
-      })
-        .then(async (result) => {
-          if (!result.ok) {
-            setCuttingError(result.error);
-            return;
-          }
-          if (result.failedLabels.length > 0) {
-            const detail = result.firstFailureDetail ? ` (${result.firstFailureDetail})` : "";
-            setCuttingError(`Cut ${result.cutCount} of ${newSegments.length} clips — ${result.failedLabels.join(", ")} failed${detail} and will use the full video instead.`);
-          }
-          setSegments(await getSegments(currentProject.id));
-        })
-        .catch((err) => {
-          console.error("cutProjectIntoClips rejected unexpectedly:", err);
-          setCuttingError(err instanceof Error ? err.message : "Cutting into clips failed unexpectedly.");
-        });
-    }
+    // Fresh boundaries invalidate whatever was cut before (saveSegments
+    // itself drops the old clip_path values) — stay locked out of
+    // Annotate until the new cut settles. The canEnterAnnotate effect
+    // switches the tab over automatically once it does (or immediately,
+    // for a project with no real video to cut).
+    setCuttingSettled(false);
+    void runCutting(newSegments);
   }
 
   async function handleSelectSegment(index: number) {
@@ -372,14 +428,14 @@ export default function AnnotationWorkspace({
 
       <div className="mt-8 flex gap-1.5 border-b border-border">
         {tabs.map((t) => {
-          const locked = t.key === "annotate" && !segments;
+          const locked = t.key === "annotate" && !canEnterAnnotate;
           return (
             <button
               key={t.key}
               type="button"
               disabled={locked}
               onClick={() => !locked && setTab(t.key)}
-              title={locked ? "Segment the video first" : undefined}
+              title={locked ? (segments ? "Cutting into period clips — please wait" : "Segment the video first") : undefined}
               className={`relative px-4 py-3 font-mono-tech text-[0.64rem] tracking-[0.14em] transition-colors ${
                 locked
                   ? "cursor-not-allowed text-text-faint/40"
