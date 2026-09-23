@@ -16,19 +16,28 @@ export default function RosterManager({
   scope: "Single Team" | "Both Teams";
   roster: RosterPlayer[];
   opponentRoster: RosterPlayer[] | undefined;
-  onSave: (roster: RosterPlayer[], opponentRoster?: RosterPlayer[]) => void;
+  onSave: (roster: RosterPlayer[], opponentRoster?: RosterPlayer[]) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
   const [teamRoster, setTeamRoster] = useState<RosterPlayer[]>(roster.length > 0 ? roster : [emptyPlayer()]);
   const [oppRoster, setOppRoster] = useState<RosterPlayer[]>(
     opponentRoster && opponentRoster.length > 0 ? opponentRoster : [emptyPlayer()]
   );
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSave() {
-    onSave(
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    const result = await onSave(
       teamRoster.filter((p) => p.number.trim() && p.name.trim()),
       scope === "Both Teams" ? oppRoster.filter((p) => p.number.trim() && p.name.trim()) : undefined
     );
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
@@ -52,8 +61,13 @@ export default function RosterManager({
       )}
 
       <div className="flex items-center gap-4">
-        <button type="button" onClick={handleSave} className="hs-btn-primary w-fit">
-          SAVE ROSTER
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="hs-btn-primary w-fit disabled:cursor-wait disabled:opacity-70"
+        >
+          {saving ? "SAVING..." : "SAVE ROSTER"}
         </button>
         <AnimatePresence>
           {saved && (
@@ -68,6 +82,12 @@ export default function RosterManager({
           )}
         </AnimatePresence>
       </div>
+
+      {error && (
+        <p className="-mt-3 font-mono-tech text-[0.62rem] leading-relaxed tracking-wide text-[#ff6b6b]">
+          ⚠ {error}
+        </p>
+      )}
     </div>
   );
 }

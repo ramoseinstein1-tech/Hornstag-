@@ -456,12 +456,18 @@ export async function addActivity(userId: string, text: string): Promise<void> {
  * permits both the owner and the assigned annotator to write here).
  * Deletes the old rows and inserts the new list rather than diffing,
  * since callers always pass the complete edited roster.
+ *
+ * Returns a real ok/error result rather than silently swallowing a
+ * failed insert — a single bad row (or a transient network blip) used
+ * to fail the whole multi-row insert with the error never checked, so
+ * the roster tab would show "SAVED" while actually having deleted the
+ * old rows and inserted nothing.
  */
 export async function updateRoster(
   projectId: string,
   roster: RosterPlayer[],
   opponentRoster?: RosterPlayer[]
-): Promise<Project | null> {
+): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
   const supabase = createClient();
 
   await supabase.from("roster_players").delete().eq("project_id", projectId).eq("side", "team");
@@ -469,7 +475,7 @@ export async function updateRoster(
     // Carries savedPlayerId through the delete+reinsert — otherwise an
     // annotator fixing a jersey number typo here would silently sever
     // that player's link to their saved-team career stats.
-    await supabase.from("roster_players").insert(
+    const { error } = await supabase.from("roster_players").insert(
       roster.map((p, i) => ({
         id: p.id,
         project_id: projectId,
@@ -480,18 +486,28 @@ export async function updateRoster(
         saved_player_id: p.savedPlayerId ?? null,
       }))
     );
+    if (error) {
+      console.error("updateRoster failed to save the team roster:", error);
+      return { ok: false, error: `Couldn't save the roster: ${error.message}` };
+    }
   }
 
   if (opponentRoster !== undefined) {
     await supabase.from("roster_players").delete().eq("project_id", projectId).eq("side", "opponent");
     if (opponentRoster.length > 0) {
-      await supabase.from("roster_players").insert(
+      const { error } = await supabase.from("roster_players").insert(
         opponentRoster.map((p, i) => ({ id: p.id, project_id: projectId, side: "opponent", number: p.number, name: p.name, sort_order: i }))
       );
+      if (error) {
+        console.error("updateRoster failed to save the opponent roster:", error);
+        return { ok: false, error: `Couldn't save the opponent roster: ${error.message}` };
+      }
     }
   }
 
-  return getProject(projectId);
+  const project = await getProject(projectId);
+  if (!project) return { ok: false, error: "Roster saved, but the project couldn't be re-fetched." };
+  return { ok: true, project };
 }
 
 export async function createProject(

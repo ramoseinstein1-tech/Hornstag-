@@ -366,9 +366,14 @@ export default function AnnotationWorkspace({
     if (editingEvent?.id === eventId) setEditingEvent(null);
   }
 
-  async function handleSaveRoster(roster: RosterPlayer[], opponentRoster?: RosterPlayer[]) {
-    const updated = await updateRoster(currentProject.id, roster, opponentRoster);
-    if (updated) setCurrentProject(updated);
+  async function handleSaveRoster(
+    roster: RosterPlayer[],
+    opponentRoster?: RosterPlayer[]
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const result = await updateRoster(currentProject.id, roster, opponentRoster);
+    if (!result.ok) return result;
+    setCurrentProject(result.project);
+    return { ok: true };
   }
 
   return (
