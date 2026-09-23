@@ -37,6 +37,14 @@ const ICONS = {
       <path d="M3 10h18" />
     </>
   ),
+  team: (
+    <>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M2.5 19.5c0-3.3 2.9-6 6.5-6s6.5 2.7 6.5 6" />
+      <circle cx="17.5" cy="8.5" r="2.3" />
+      <path d="M15.8 13.3c2.9.4 5.2 2.5 5.2 5.2" />
+    </>
+  ),
   gear: (
     <>
       <circle cx="12" cy="12" r="3.2" />
@@ -67,6 +75,7 @@ const NAV: { label: string; href: string; exact?: boolean; icon: keyof typeof IC
   { label: "Projects", href: "/client-portal/projects", icon: "folder" },
   { label: "Upload Project", href: "/client-portal/upload", icon: "upload" },
   { label: "Results", href: "/client-portal/results", icon: "chart" },
+  { label: "Saved Teams", href: "/client-portal/saved-teams", icon: "team" },
   { label: "Billing", href: "/client-portal/billing", icon: "card" },
   { label: "Account Settings", href: "/client-portal/settings", icon: "gear" },
 ];
