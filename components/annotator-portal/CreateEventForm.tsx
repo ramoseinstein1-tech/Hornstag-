@@ -7,6 +7,8 @@ import {
   EVENT_TYPE_LABELS,
   SHOT_EVENT_TYPES,
   TEAMLESS_EVENT_TYPES,
+  HEART_STAT_EVENT_TYPES,
+  BOX_OUT_EVENT_TYPE,
   type AnnotationEvent,
   type EventType,
   type NewEventInput,
@@ -16,7 +18,7 @@ import {
 import { computeGameClockSeconds, formatClockMMSS, parseClockMMSS, type VideoSegment } from "@/lib/portal/segments";
 import CourtDiagram from "./CourtDiagram";
 
-const EVENT_TYPE_ORDER: EventType[] = [
+const TRADITIONAL_EVENT_TYPE_ORDER: EventType[] = [
   "two_point",
   "three_point",
   "free_throw",
@@ -35,6 +37,8 @@ const EVENT_TYPE_ORDER: EventType[] = [
   "timeout",
   "custom",
 ];
+
+const HEART_STATS_EVENT_TYPE_ORDER: EventType[] = [...HEART_STAT_EVENT_TYPES, "custom"];
 
 function formatHHMMSS(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -85,6 +89,8 @@ export default function CreateEventForm({
   activeSegmentLabel?: string;
 }) {
   const bothTeams = project.scope === "Both Teams";
+  const EVENT_TYPE_ORDER =
+    project.annotationKind === "heart_stats" ? HEART_STATS_EVENT_TYPE_ORDER : TRADITIONAL_EVENT_TYPE_ORDER;
 
   const [timestampInput, setTimestampInput] = useState(formatHHMMSS(currentTimeSeconds));
   const [touched, setTouched] = useState(false);
@@ -139,6 +145,11 @@ export default function CreateEventForm({
 
   const roster = teamSide === "team" ? project.roster : project.opponentRoster ?? [];
   const isShotType = eventType !== "" && SHOT_EVENT_TYPES.includes(eventType);
+  const isBoxOut = eventType === BOX_OUT_EVENT_TYPE;
+  // Box Out gets the same "Successful" checkbox a shot type gets (and
+  // the W hotkey toggles it the same way) — it just skips the court
+  // diagram below, since shot location doesn't apply.
+  const hasSuccessCheckbox = isShotType || isBoxOut;
   const isTeamless = eventType !== "" && TEAMLESS_EVENT_TYPES.includes(eventType);
 
   // Always points at the current render's submitEvent — the keydown
@@ -151,11 +162,10 @@ export default function CreateEventForm({
   // Q/R/W tagging hotkeys — Q and R both just submit (same logic the
   // SAVE EVENT button calls); they're two entry points distinguished by
   // which one matches the currently-selected event type, not two
-  // different actions. W toggles the "Successful" checkbox, which is
-  // only rendered for shot types today — Heart Stats' Box Out event
-  // reuses this same checkbox/state, so W will apply there too once
-  // that's added. Ignored while focus is in a text input/textarea/select
-  // so typing in the custom-label field is never hijacked.
+  // different actions. W toggles the "Successful" checkbox — rendered
+  // for shot types and Heart Stats' Box Out event alike (hasSuccessCheckbox).
+  // Ignored while focus is in a text input/textarea/select so typing in
+  // the custom-label field is never hijacked.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const tag = (document.activeElement?.tagName ?? "").toLowerCase();
@@ -165,14 +175,14 @@ export default function CreateEventForm({
       if ((key === "q" && !isShotType) || (key === "r" && isShotType)) {
         e.preventDefault();
         void submitEventRef.current();
-      } else if (key === "w" && isShotType) {
+      } else if (key === "w" && hasSuccessCheckbox) {
         e.preventDefault();
         setMade((prev) => !prev);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isShotType]);
+  }, [isShotType, hasSuccessCheckbox]);
 
   function resetForm() {
     setEventType(emptyState.eventType);
@@ -219,7 +229,7 @@ export default function CreateEventForm({
       teamSide: isTeamless ? undefined : teamSide,
       playerId: isTeamless ? undefined : playerId,
       eventType,
-      made: isShotType ? made : undefined,
+      made: hasSuccessCheckbox ? made : undefined,
       shotLocation: isShotType ? shotLocation ?? undefined : undefined,
       customLabel: eventType === "custom" ? customLabel.trim() || undefined : undefined,
       gameClockSeconds: parseClockMMSS(gameClockInput) ?? undefined,
@@ -393,7 +403,7 @@ export default function CreateEventForm({
       </AnimatePresence>
 
       <AnimatePresence initial={false}>
-        {isShotType && (
+        {hasSuccessCheckbox && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
@@ -417,13 +427,15 @@ export default function CreateEventForm({
               >
                 ✓
               </span>
-              <span className="text-sm text-text">Successful shot</span>
+              <span className="text-sm text-text">{isBoxOut ? "Successful box out" : "Successful shot"}</span>
             </label>
 
-            <div>
-              <span className="hs-label">SHOT LOCATION</span>
-              <CourtDiagram value={shotLocation} onChange={setShotLocation} />
-            </div>
+            {isShotType && (
+              <div>
+                <span className="hs-label">SHOT LOCATION</span>
+                <CourtDiagram value={shotLocation} onChange={setShotLocation} />
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

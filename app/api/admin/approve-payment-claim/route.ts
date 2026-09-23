@@ -54,6 +54,7 @@ export async function POST(request: Request) {
       p_stripe_session_id: `claim-${claim.id}`,
       p_note: note,
       p_granted_by: caller.id,
+      p_kind: claim.annotation_kind,
     });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   } else {

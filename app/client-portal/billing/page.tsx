@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { getProjects } from "@/lib/portal/store";
-import type { Project, AnnotationScope } from "@/lib/portal/store";
+import type { Project, AnnotationScope, AnnotationKind } from "@/lib/portal/store";
 import {
   getCreditBatches,
   creditBalance,
   PER_GAME_PRICE_PHP,
+  HEART_STATS_PRICE_PHP,
   SUBSCRIPTION_PACKAGES,
   SUBSCRIPTION_PACKAGE_ORDER,
   type CreditBatch,
@@ -64,11 +65,20 @@ export default function BillingPage() {
   const [claims, setClaims] = useState<PaymentClaim[]>([]);
 
   const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
+  const [buyAnnotationKind, setBuyAnnotationKind] = useState<AnnotationKind>("traditional");
   const [buyKind, setBuyKind] = useState<"per_game" | "subscription">("per_game");
   const [buyScope, setBuyScope] = useState<AnnotationScope>("Single Team");
   const [buyQuantity, setBuyQuantity] = useState(1);
   const [buyPackage, setBuyPackage] = useState<SubscriptionPackageKey>("rookie");
   const [referenceNumber, setReferenceNumber] = useState("");
+
+  // Heart Stats has no subscription-bundle option yet — per-game only —
+  // so switching to it forces the purchase-kind back to per_game and
+  // the Package tab simply never shows.
+  function selectAnnotationKind(kind: AnnotationKind) {
+    setBuyAnnotationKind(kind);
+    if (kind === "heart_stats") setBuyKind("per_game");
+  }
 
   async function refresh() {
     if (!user) return;
@@ -93,17 +103,20 @@ export default function BillingPage() {
     setTimeout(() => setNotice(null), 6000);
   }
 
-  const balance = useMemo(() => creditBalance(batches), [batches]);
+  const traditionalBalance = useMemo(() => creditBalance(batches, "traditional"), [batches]);
+  const heartStatsBalance = useMemo(() => creditBalance(batches, "heart_stats"), [batches]);
   const pendingClaims = useMemo(() => claims.filter((c) => c.status !== "approved"), [claims]);
 
+  const perGamePriceTable = buyAnnotationKind === "heart_stats" ? HEART_STATS_PRICE_PHP : PER_GAME_PRICE_PHP;
   const buyTotal =
-    buyKind === "per_game" ? PER_GAME_PRICE_PHP[buyScope] * buyQuantity : SUBSCRIPTION_PACKAGES[buyPackage].pricePhp;
+    buyKind === "per_game" ? perGamePriceTable[buyScope] * buyQuantity : SUBSCRIPTION_PACKAGES[buyPackage].pricePhp;
 
   async function handleSubmitClaim() {
     if (!user || !payMethod || referenceNumber.trim().length < 3) return;
     setSubmitting(true);
     const result = await submitPaymentClaim(user.id, {
       kind: buyKind,
+      annotationKind: buyAnnotationKind,
       scope: buyKind === "per_game" ? buyScope : undefined,
       quantity: buyKind === "per_game" ? buyQuantity : undefined,
       package: buyKind === "subscription" ? buyPackage : undefined,
@@ -162,9 +175,15 @@ export default function BillingPage() {
         <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
           CREDIT BALANCE
         </h2>
+        <p className="mb-3 font-mono-tech text-[0.58rem] tracking-[0.14em] text-text-faint">TRADITIONAL</p>
         <div className="grid grid-cols-2 gap-4 sm:max-w-md">
-          <StatTile label="SINGLE TEAM GAMES" value={balance["Single Team"]} />
-          <StatTile label="BOTH TEAMS GAMES" value={balance["Both Teams"]} />
+          <StatTile label="SINGLE TEAM GAMES" value={traditionalBalance["Single Team"]} />
+          <StatTile label="BOTH TEAMS GAMES" value={traditionalBalance["Both Teams"]} />
+        </div>
+        <p className="mt-6 mb-3 font-mono-tech text-[0.58rem] tracking-[0.14em] text-text-faint">HEART STATS</p>
+        <div className="grid grid-cols-2 gap-4 sm:max-w-md">
+          <StatTile label="SINGLE TEAM GAMES" value={heartStatsBalance["Single Team"]} />
+          <StatTile label="BOTH TEAMS GAMES" value={heartStatsBalance["Both Teams"]} />
         </div>
         <p className="mt-3 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
           {projects.length} PROJECT{projects.length === 1 ? "" : "S"} UPLOADED TOTAL
@@ -182,19 +201,46 @@ export default function BillingPage() {
         </h2>
         <div className="hs-panel sheen-top flex flex-col gap-6 p-6 sm:max-w-2xl">
           <div>
-            <p className="mb-3 font-mono-tech text-[0.58rem] tracking-[0.16em] text-text-faint">STEP 1 — WHAT ARE YOU BUYING</p>
-            <div className="flex gap-2">
-              {(["per_game", "subscription"] as const).map((k) => (
+            <p className="mb-3 font-mono-tech text-[0.58rem] tracking-[0.16em] text-text-faint">ANNOTATION TYPE</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {(["traditional", "heart_stats"] as AnnotationKind[]).map((k) => (
                 <button
                   key={k}
                   type="button"
-                  onClick={() => setBuyKind(k)}
-                  className={`hs-chip transition-colors ${buyKind === k ? "!border-orange/50 !text-orange-bright" : "text-text-faint"}`}
+                  onClick={() => selectAnnotationKind(k)}
+                  className={`hs-panel sheen-top flex flex-col items-start p-4 text-left transition-colors ${
+                    buyAnnotationKind === k ? "!border-orange/50" : ""
+                  }`}
                 >
-                  {k === "per_game" ? "Per-game" : "Package"}
+                  <span className={`font-display text-sm font-semibold ${buyAnnotationKind === k ? "text-orange-bright" : "text-text"}`}>
+                    {k === "traditional" ? "Traditional Box Score" : "Heart Stats"}
+                  </span>
+                  <span className="mt-1 font-mono-tech text-[0.58rem] leading-relaxed text-text-faint">
+                    {k === "traditional"
+                      ? "Points, rebounds, assists, and the full box score."
+                      : "Deflections, loose balls, charges, screen assists, contested shots, box outs."}
+                  </span>
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="border-t border-border pt-6">
+            <p className="mb-3 font-mono-tech text-[0.58rem] tracking-[0.16em] text-text-faint">STEP 1 — WHAT ARE YOU BUYING</p>
+            {buyAnnotationKind === "traditional" && (
+              <div className="flex gap-2">
+                {(["per_game", "subscription"] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setBuyKind(k)}
+                    className={`hs-chip transition-colors ${buyKind === k ? "!border-orange/50 !text-orange-bright" : "text-text-faint"}`}
+                  >
+                    {k === "per_game" ? "Per-game" : "Package"}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {buyKind === "per_game" ? (
               <div className="mt-4 flex flex-col gap-4">
@@ -212,7 +258,7 @@ export default function BillingPage() {
                         {s}
                       </span>
                       <span className="mt-1 font-mono-tech text-[0.6rem] tracking-[0.06em] text-text-faint">
-                        {formatPhp(PER_GAME_PRICE_PHP[s])} / game
+                        {formatPhp(perGamePriceTable[s])} / game
                       </span>
                     </button>
                   ))}
@@ -336,6 +382,9 @@ export default function BillingPage() {
                 <div>
                   <p className="text-sm text-text">
                     {c.kind === "per_game" ? `${c.quantity}× ${c.scope}` : SUBSCRIPTION_PACKAGES[c.package!].label}
+                    {c.annotationKind === "heart_stats" && (
+                      <span className="hs-chip !ml-2 !py-0.5 !text-[0.54rem]">HEART STATS</span>
+                    )}
                     {" — "}
                     {formatPhp(c.amountPhp)}
                   </p>
@@ -387,7 +436,12 @@ export default function BillingPage() {
                           <p className="mt-1 font-mono-tech text-[0.56rem] tracking-[0.06em] text-text-faint">{b.note}</p>
                         )}
                       </td>
-                      <td className="p-4 text-text">{sourceLabel(b.source)}</td>
+                      <td className="p-4 text-text">
+                        {sourceLabel(b.source)}
+                        {b.annotationKind === "heart_stats" && (
+                          <span className="hs-chip !ml-2 !py-0.5 !text-[0.54rem]">HEART STATS</span>
+                        )}
+                      </td>
                       <td className="p-4 text-text-muted">{b.scope}</td>
                       <td className="p-4 font-mono-tech text-text-muted">{b.quantityTotal}</td>
                       <td className="p-4 font-mono-tech text-orange-bright">{b.quantityRemaining}</td>

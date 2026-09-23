@@ -10,9 +10,17 @@ import {
   toCsv,
   downloadCsv,
 } from "@/lib/portal/store";
-import type { Project, PlayerBoxScore, ProjectResults, TaggedClip, ProjectStatus } from "@/lib/portal/store";
+import type {
+  Project,
+  PlayerBoxScore,
+  PlayerHeartStatsBoxScore,
+  ProjectResults,
+  HeartStatsResults,
+  TaggedClip,
+  ProjectStatus,
+} from "@/lib/portal/store";
 import { officialOutcome } from "@/lib/portal/store";
-import { computeRealResults, hasRealAnnotationData } from "@/lib/portal/results";
+import { computeRealResults, computeRealHeartStatsResults, hasRealAnnotationData } from "@/lib/portal/results";
 import { getSegments, getSegmentClipUrl, formatClockMMSS, type VideoSegment } from "@/lib/portal/segments";
 import { getVideoIssues, ISSUE_TYPE_LABELS, type VideoIssue } from "@/lib/portal/videoIssues";
 import ShotChart from "@/components/client-portal/ShotChart";
@@ -107,6 +115,46 @@ function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxSc
               <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">—</td>
             </tr>
           </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function HeartStatsBoxScoreTable({ title, players }: { title: string; players: PlayerHeartStatsBoxScore[] }) {
+  return (
+    <div className="hs-panel sheen-top p-5">
+      <h3 className="mb-4 font-mono-tech text-[0.64rem] tracking-[0.18em] text-text-soft">
+        {title}
+      </h3>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-border text-left">
+              {["PLAYER", "DEFL", "LOOSE BALLS", "CHARGES", "SCREEN AST", "CONTESTED", "BOX OUTS"].map((h) => (
+                <th key={h} className="pb-2 pr-4 font-mono-tech text-[0.6rem] tracking-[0.1em] text-text-faint">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {players.map((p) => (
+              <tr key={`${p.number}-${p.name}`} className="border-b border-border/60 last:border-0">
+                <td className="py-2.5 pr-4 text-text">
+                  #{p.number} {p.name}
+                </td>
+                <td className="py-2.5 pr-4 font-mono-tech text-orange-bright">{p.deflections}</td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.looseBallsRecovered}</td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.chargesDrawn}</td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.screenAssists}</td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.contestedShots}</td>
+                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">
+                  {p.boxOutsWon}/{p.boxOutsAttempted}
+                </td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
     </div>
@@ -311,6 +359,7 @@ export default function ResultsPage() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<ProjectResults | null>(null);
+  const [heartResults, setHeartResults] = useState<HeartStatsResults | null>(null);
   const [periodClips, setPeriodClips] = useState<VideoSegment[]>([]);
   const [videoIssues, setVideoIssues] = useState<VideoIssue[]>([]);
 
@@ -341,18 +390,25 @@ export default function ResultsPage() {
   useEffect(() => {
     if (!selected || selected.status !== "Completed") {
       setResults(null);
+      setHeartResults(null);
       setPeriodClips([]);
       return;
     }
     let cancelled = false;
-    hasRealAnnotationData(selected.id).then((hasReal) => {
-      if (cancelled) return;
-      if (hasReal) {
-        computeRealResults(selected).then((r) => !cancelled && setResults(r));
-      } else {
-        setResults(getProjectResults(selected));
-      }
-    });
+    if (selected.annotationKind === "heart_stats") {
+      setResults(null);
+      computeRealHeartStatsResults(selected).then((r) => !cancelled && setHeartResults(r));
+    } else {
+      setHeartResults(null);
+      hasRealAnnotationData(selected.id).then((hasReal) => {
+        if (cancelled) return;
+        if (hasReal) {
+          computeRealResults(selected).then((r) => !cancelled && setResults(r));
+        } else {
+          setResults(getProjectResults(selected));
+        }
+      });
+    }
     getSegments(selected.id).then((segs) => {
       if (!cancelled) setPeriodClips((segs ?? []).filter((s) => s.clipPath));
     });
@@ -397,11 +453,43 @@ export default function ResultsPage() {
     return rows;
   }
 
+  const activeClips: TaggedClip[] = heartResults?.clips ?? results?.clips ?? [];
+
   const EVENT_LOG_HEADERS = ["TIME", "EVENT", "PLAYER", "CONFIDENCE"];
 
   function eventLogRows(): (string | number)[][] {
-    if (!results) return [];
-    return results.clips.map((c) => [c.time, c.label, c.player, `${c.confidence}%`]);
+    return activeClips.map((c) => [c.time, c.label, c.player, `${c.confidence}%`]);
+  }
+
+  const HEART_STATS_BOX_SCORE_HEADERS = ["TEAM", "PLAYER", "DEFL", "LOOSE BALLS", "CHARGES", "SCREEN AST", "CONTESTED", "BOX OUTS WON", "BOX OUTS ATTEMPTED"];
+
+  function heartStatsBoxScoreRows(): (string | number)[][] {
+    if (!selected || !heartResults) return [];
+    const rows: (string | number)[][] = [];
+    const addRows = (label: string, players: PlayerHeartStatsBoxScore[]) => {
+      players.forEach((p) =>
+        rows.push([
+          label,
+          `#${p.number} ${p.name}`,
+          p.deflections,
+          p.looseBallsRecovered,
+          p.chargesDrawn,
+          p.screenAssists,
+          p.contestedShots,
+          p.boxOutsWon,
+          p.boxOutsAttempted,
+        ])
+      );
+    };
+    addRows(selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM", heartResults.team);
+    if (heartResults.opponent) addRows(selected.opponent ?? "OPPONENT", heartResults.opponent);
+    return rows;
+  }
+
+  function handleDownloadHeartStatsBoxScore() {
+    if (!selected) return;
+    const csv = toCsv(HEART_STATS_BOX_SCORE_HEADERS, heartStatsBoxScoreRows());
+    downloadCsv(`${selected.name.replace(/[^\w-]+/g, "_")}_heart_stats_box_score.csv`, csv);
   }
 
   const TEAM_STATS_HEADERS = ["TEAM", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG%", "3P%"];
@@ -673,6 +761,56 @@ export default function ResultsPage() {
               </button>
               <button onClick={handleDownloadFullReport} className="hs-btn-secondary">
                 DOWNLOAD FULL REPORT (CSV)
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {selected && selected.annotationKind === "heart_stats" && heartResults && (
+        <>
+          <div className="mt-8">
+            <span className="hs-chip !border-[#ff6b6b]/40 !text-[#ff9b9b]">HEART STATS PROJECT</span>
+            <p className="mt-2 max-w-lg text-xs leading-relaxed text-text-faint">
+              Hustle/effort plays only — no official score, shot chart, or
+              playing-time tracking applies to this package.
+            </p>
+          </div>
+
+          <div className="mt-8 flex flex-col gap-6">
+            <h2 className="font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+              HEART STATS BOX SCORE
+            </h2>
+            <HeartStatsBoxScoreTable
+              title={selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
+              players={heartResults.team}
+            />
+            {heartResults.opponent && (
+              <HeartStatsBoxScoreTable title={selected.opponent ?? "OPPONENT"} players={heartResults.opponent} />
+            )}
+          </div>
+
+          <div className="mt-10">
+            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+              TAGGED CLIPS
+            </h2>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {heartResults.clips.map((c) => (
+                <ClipCard key={c.id} projectId={selected.id} clip={c} />
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-10 mb-2">
+            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+              REPORTS
+            </h2>
+            <div className="flex flex-wrap gap-3">
+              <button onClick={handleDownloadHeartStatsBoxScore} className="hs-btn-secondary">
+                DOWNLOAD BOX SCORE (CSV)
+              </button>
+              <button onClick={handleDownloadEventLog} className="hs-btn-secondary">
+                DOWNLOAD EVENT LOG (CSV)
               </button>
             </div>
           </div>

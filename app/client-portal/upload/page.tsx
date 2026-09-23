@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import RosterEditor from "@/components/RosterEditor";
 import { createProject, formatFileSize, officialOutcome, uploadProjectVideo } from "@/lib/portal/store";
-import type { AnnotationScope, GameFormat, RosterPlayer, UploadProgress } from "@/lib/portal/store";
+import type { AnnotationKind, AnnotationScope, GameFormat, RosterPlayer, UploadProgress } from "@/lib/portal/store";
 import { createSavedTeam, getSavedTeams } from "@/lib/portal/savedTeams";
 import type { SavedTeam } from "@/lib/portal/savedTeams";
 
@@ -35,6 +35,7 @@ export default function UploadProjectPage() {
   const [name, setName] = useState("");
   const [opponent, setOpponent] = useState("");
   const [gameDate, setGameDate] = useState("");
+  const [annotationKind, setAnnotationKind] = useState<AnnotationKind>("traditional");
   const [scope, setScope] = useState<AnnotationScope>("Single Team");
   const [format, setFormat] = useState<GameFormat>("Quarters");
   const [roster, setRoster] = useState<RosterPlayer[]>([emptyPlayer()]);
@@ -90,11 +91,15 @@ export default function UploadProjectPage() {
       }
     }
 
-    if (teamScoreInput.trim() === "" || !/^\d+$/.test(teamScoreInput.trim())) {
-      next.teamScore = "Enter your team's final score.";
-    }
-    if (opponentScoreInput.trim() === "" || !/^\d+$/.test(opponentScoreInput.trim())) {
-      next.opponentScore = "Enter the opponent's final score.";
+    // Heart Stats projects have no official score to check the tagged
+    // score against — the whole score-check workflow doesn't apply.
+    if (annotationKind === "traditional") {
+      if (teamScoreInput.trim() === "" || !/^\d+$/.test(teamScoreInput.trim())) {
+        next.teamScore = "Enter your team's final score.";
+      }
+      if (opponentScoreInput.trim() === "" || !/^\d+$/.test(opponentScoreInput.trim())) {
+        next.opponentScore = "Enter the opponent's final score.";
+      }
     }
 
     return next;
@@ -118,6 +123,7 @@ export default function UploadProjectPage() {
       opponent: opponent.trim() || undefined,
       gameDate: gameDate || undefined,
       scope,
+      annotationKind,
       format,
       roster: roster.filter((p) => p.number.trim() && p.name.trim()),
       opponentRoster:
@@ -127,7 +133,10 @@ export default function UploadProjectPage() {
       notes: notes.trim() || undefined,
       fileName: file!.name,
       fileSize: formatFileSize(file!.size),
-      officialScore: { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) },
+      officialScore:
+        annotationKind === "traditional"
+          ? { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) }
+          : undefined,
     }, user.name);
 
     if (!createResult.ok) {
@@ -203,6 +212,7 @@ export default function UploadProjectPage() {
                 setSelectedSavedTeamId("");
                 setSaveAsTeam(false);
                 setNewTeamName("");
+                setAnnotationKind("traditional");
               }}
               className="hs-btn-secondary flex-1"
             >
@@ -292,6 +302,26 @@ export default function UploadProjectPage() {
           </div>
         </div>
 
+        <div>
+          <span className="hs-label">ANNOTATION TYPE</span>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {(["traditional", "heart_stats"] as AnnotationKind[]).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setAnnotationKind(k)}
+                className={`rounded-md border px-4 py-[0.62rem] text-left text-sm font-medium transition-all duration-300 ${
+                  annotationKind === k
+                    ? "border-orange/50 bg-orange/10 text-orange-bright"
+                    : "border-border bg-transparent text-text-muted hover:border-border-strong"
+                }`}
+              >
+                {k === "traditional" ? "Traditional Box Score" : "Heart Stats"}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           <div>
             <span className="hs-label">ANNOTATION SCOPE</span>
@@ -334,59 +364,61 @@ export default function UploadProjectPage() {
           </div>
         </div>
 
-        <div>
-          <span className="hs-label">OFFICIAL FINAL SCORE</span>
-          <div className="grid grid-cols-2 gap-6">
-            <div>
-              <div className="w-full">
-                <input
-                  className="hs-input"
-                  placeholder="Your team's score"
-                  inputMode="numeric"
-                  value={teamScoreInput}
-                  onChange={(e) => setTeamScoreInput(e.target.value.replace(/[^\d]/g, ""))}
-                  aria-invalid={!!errors.teamScore}
-                  aria-label="Your team's final score"
-                />
+        {annotationKind === "traditional" && (
+          <div>
+            <span className="hs-label">OFFICIAL FINAL SCORE</span>
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <div className="w-full">
+                  <input
+                    className="hs-input"
+                    placeholder="Your team's score"
+                    inputMode="numeric"
+                    value={teamScoreInput}
+                    onChange={(e) => setTeamScoreInput(e.target.value.replace(/[^\d]/g, ""))}
+                    aria-invalid={!!errors.teamScore}
+                    aria-label="Your team's final score"
+                  />
+                </div>
+                {errors.teamScore && (
+                  <p className="mt-2 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">
+                    {errors.teamScore}
+                  </p>
+                )}
               </div>
-              {errors.teamScore && (
-                <p className="mt-2 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">
-                  {errors.teamScore}
-                </p>
-              )}
-            </div>
-            <div>
-              <div className="w-full">
-                <input
-                  className="hs-input"
-                  placeholder="Opponent's score"
-                  inputMode="numeric"
-                  value={opponentScoreInput}
-                  onChange={(e) => setOpponentScoreInput(e.target.value.replace(/[^\d]/g, ""))}
-                  aria-invalid={!!errors.opponentScore}
-                  aria-label="Opponent's final score"
-                />
+              <div>
+                <div className="w-full">
+                  <input
+                    className="hs-input"
+                    placeholder="Opponent's score"
+                    inputMode="numeric"
+                    value={opponentScoreInput}
+                    onChange={(e) => setOpponentScoreInput(e.target.value.replace(/[^\d]/g, ""))}
+                    aria-invalid={!!errors.opponentScore}
+                    aria-label="Opponent's final score"
+                  />
+                </div>
+                {errors.opponentScore && (
+                  <p className="mt-2 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">
+                    {errors.opponentScore}
+                  </p>
+                )}
               </div>
-              {errors.opponentScore && (
-                <p className="mt-2 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">
-                  {errors.opponentScore}
-                </p>
-              )}
             </div>
-          </div>
-          {teamScoreInput !== "" && opponentScoreInput !== "" && (
-            <p className="mt-3 font-mono-tech text-[0.62rem] tracking-[0.1em] text-orange-bright">
-              {(() => {
-                const outcome = officialOutcome({ team: Number(teamScoreInput), opponent: Number(opponentScoreInput) });
-                if (outcome === "tie") return "RESULT: TIE";
-                return outcome === "team" ? "RESULT: YOUR TEAM WINS" : "RESULT: OPPONENT WINS";
-              })()}
+            {teamScoreInput !== "" && opponentScoreInput !== "" && (
+              <p className="mt-3 font-mono-tech text-[0.62rem] tracking-[0.1em] text-orange-bright">
+                {(() => {
+                  const outcome = officialOutcome({ team: Number(teamScoreInput), opponent: Number(opponentScoreInput) });
+                  if (outcome === "tie") return "RESULT: TIE";
+                  return outcome === "team" ? "RESULT: YOUR TEAM WINS" : "RESULT: OPPONENT WINS";
+                })()}
+              </p>
+            )}
+            <p className="mt-2 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
+              THIS IS THE GROUND TRUTH — QA CHECKS THE ANNOTATED SCORE AGAINST IT BEFORE COMPLETION
             </p>
-          )}
-          <p className="mt-2 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
-            THIS IS THE GROUND TRUTH — QA CHECKS THE ANNOTATED SCORE AGAINST IT BEFORE COMPLETION
-          </p>
-        </div>
+          </div>
+        )}
 
         <div>
           {savedTeams.length > 0 && (

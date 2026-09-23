@@ -21,7 +21,16 @@ import {
   type TeamSide,
 } from "./events";
 import { getSegments, periodForTimestamp, type VideoSegment } from "./segments";
-import type { Project, RosterPlayer, PlayerBoxScore, TaggedClip, ShotChartPoint, ProjectResults } from "./store";
+import type {
+  Project,
+  RosterPlayer,
+  PlayerBoxScore,
+  TaggedClip,
+  ShotChartPoint,
+  ProjectResults,
+  PlayerHeartStatsBoxScore,
+  HeartStatsResults,
+} from "./store";
 
 export function formatClipTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -60,6 +69,32 @@ export function computeBoxScoreForSide(
       tpm: threes.filter((e) => e.made).length,
       minSeconds: playingTime.get(p.id) ?? 0,
       plusMinus: plusMinus.get(p.id) ?? 0,
+    };
+  });
+}
+
+/** Per-player hustle-stat tally for one side of a Heart Stats project —
+ * the box_out "made" checkbox counts as a won box out; every box_out
+ * tag (won or lost) counts toward boxOutsAttempted. */
+export function computeHeartStatsBoxScore(
+  roster: RosterPlayer[],
+  events: AnnotationEvent[],
+  teamSide: TeamSide
+): PlayerHeartStatsBoxScore[] {
+  return roster.map((p) => {
+    const own = events.filter((e) => e.teamSide === teamSide && e.playerId === p.id);
+    const boxOuts = own.filter((e) => e.eventType === "box_out");
+
+    return {
+      number: p.number,
+      name: p.name,
+      deflections: own.filter((e) => e.eventType === "deflection").length,
+      looseBallsRecovered: own.filter((e) => e.eventType === "loose_ball_recovered").length,
+      chargesDrawn: own.filter((e) => e.eventType === "charge_drawn").length,
+      screenAssists: own.filter((e) => e.eventType === "screen_assist").length,
+      contestedShots: own.filter((e) => e.eventType === "contested_shot").length,
+      boxOutsWon: boxOuts.filter((e) => e.made).length,
+      boxOutsAttempted: boxOuts.length,
     };
   });
 }
@@ -123,6 +158,24 @@ export async function computeRealResults(project: Project): Promise<ProjectResul
     clips: computeClips(project, events, segments),
     teamShots: computeShotChart(events, "team"),
     opponentShots: project.opponentRoster && project.opponentRoster.length > 0 ? computeShotChart(events, "opponent") : undefined,
+  };
+}
+
+/** Real, annotator-tagged results for a Heart Stats project — the
+ * simplified counterpart to computeRealResults, with no score/shot
+ * chart/playing-time sections since none of those apply. */
+export async function computeRealHeartStatsResults(project: Project): Promise<HeartStatsResults> {
+  const [events, segmentsOrNull] = await Promise.all([getEvents(project.id), getSegments(project.id)]);
+  const segments = segmentsOrNull ?? [];
+  const team = computeHeartStatsBoxScore(project.roster, events, "team");
+  const opponent =
+    project.opponentRoster && project.opponentRoster.length > 0
+      ? computeHeartStatsBoxScore(project.opponentRoster, events, "opponent")
+      : undefined;
+  return {
+    team,
+    opponent,
+    clips: computeClips(project, events, segments),
   };
 }
 

@@ -11,7 +11,7 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
-import type { AnnotationScope } from "./store";
+import type { AnnotationKind, AnnotationScope } from "./store";
 import type { SubscriptionPackageKey } from "./billing";
 
 export type PaymentMethod = "gcash" | "uniondigital" | "gotyme";
@@ -30,6 +30,7 @@ export type PaymentClaim = {
   id: string;
   ownerId: string;
   kind: "per_game" | "subscription";
+  annotationKind: AnnotationKind;
   scope?: AnnotationScope;
   quantity?: number;
   package?: SubscriptionPackageKey;
@@ -50,6 +51,7 @@ type PaymentClaimRow = {
   id: string;
   owner_id: string;
   kind: "per_game" | "subscription";
+  annotation_kind: AnnotationKind;
   scope: AnnotationScope | null;
   quantity: number | null;
   package: SubscriptionPackageKey | null;
@@ -68,6 +70,7 @@ function mapClaimRow(row: PaymentClaimRow): PaymentClaim {
     id: row.id,
     ownerId: row.owner_id,
     kind: row.kind,
+    annotationKind: row.annotation_kind,
     scope: row.scope ?? undefined,
     quantity: row.quantity ?? undefined,
     package: row.package ?? undefined,
@@ -119,6 +122,7 @@ export async function getPendingPaymentClaims(): Promise<PaymentClaim[]> {
 
 export type NewPaymentClaimInput = {
   kind: "per_game" | "subscription";
+  annotationKind?: AnnotationKind;
   scope?: AnnotationScope;
   quantity?: number;
   package?: SubscriptionPackageKey;
@@ -135,6 +139,7 @@ export async function submitPaymentClaim(
   const { error } = await supabase.from("payment_claims").insert({
     owner_id: ownerId,
     kind: input.kind,
+    annotation_kind: input.annotationKind ?? "traditional",
     scope: input.scope ?? null,
     quantity: input.quantity ?? null,
     package: input.package ?? null,

@@ -19,6 +19,11 @@ import { createClient } from "@/lib/supabase/client";
 
 export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed" | "Rejected";
 export type AnnotationScope = "Single Team" | "Both Teams";
+/** "heart_stats" projects track hustle/effort plays only (deflections,
+ * loose balls, charges, screen assists, contested shots, box outs)
+ * instead of a traditional box score — a separate credit pool from
+ * "traditional", set once at upload time. */
+export type AnnotationKind = "traditional" | "heart_stats";
 export type GameFormat = "Quarters" | "Halves";
 export type AnnotationStatus = "Unclaimed" | "Claimed" | "Correction Required" | "In Review" | "Completed" | "Rejected";
 
@@ -48,6 +53,7 @@ export type Project = {
   opponent?: string;
   gameDate?: string;
   scope: AnnotationScope;
+  annotationKind: AnnotationKind;
   format: GameFormat;
   roster: RosterPlayer[];
   opponentRoster?: RosterPlayer[];
@@ -94,6 +100,7 @@ type ProjectRow = {
   opponent: string | null;
   game_date: string | null;
   scope: AnnotationScope;
+  annotation_kind: AnnotationKind;
   format: GameFormat;
   notes: string | null;
   file_name: string | null;
@@ -134,6 +141,7 @@ function mapProjectRow(row: ProjectRow): Project {
     opponent: row.opponent ?? undefined,
     gameDate: row.game_date ?? undefined,
     scope: row.scope,
+    annotationKind: row.annotation_kind,
     format: row.format,
     roster: toRosterPlayers(row.roster_players, "team"),
     opponentRoster: row.scope === "Both Teams" ? opponentRoster : undefined,
@@ -467,17 +475,21 @@ export async function createProject(
     opponent?: string;
     gameDate?: string;
     scope: AnnotationScope;
+    annotationKind?: AnnotationKind;
     format: GameFormat;
     roster: RosterPlayer[];
     opponentRoster?: RosterPlayer[];
     notes?: string;
     fileName?: string;
     fileSize?: string;
-    officialScore: OfficialScore;
+    /** Absent for Heart Stats projects — there's no official score to
+     * check a hustle-stat-only annotation against. */
+    officialScore?: OfficialScore;
   },
   ownerName: string
 ): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
   const supabase = createClient();
+  const annotationKind = input.annotationKind ?? "traditional";
 
   // Consumed BEFORE creating the project, not after-then-rolled-back —
   // clients have no delete permission on projects at all (RLS enforces
@@ -486,14 +498,16 @@ export async function createProject(
   // failing early here avoids ever needing one just for this rollback case.
   const { data: hasCredit, error: creditError } = await supabase.rpc("consume_game_credit", {
     target_scope: input.scope,
+    target_kind: annotationKind,
   });
   if (creditError) {
     return { ok: false, error: creditError.message };
   }
   if (!hasCredit) {
+    const kindLabel = annotationKind === "heart_stats" ? "Heart Stats" : "";
     return {
       ok: false,
-      error: `No ${input.scope} game credits available — buy more games or a package on the Billing page.`,
+      error: `No ${input.scope} ${kindLabel} game credits available — buy more games on the Billing page.`,
     };
   }
 
@@ -506,12 +520,13 @@ export async function createProject(
       opponent: input.opponent,
       game_date: input.gameDate || null,
       scope: input.scope,
+      annotation_kind: annotationKind,
       format: input.format,
       notes: input.notes,
       file_name: input.fileName,
       file_size: input.fileSize,
-      official_score_team: input.officialScore.team,
-      official_score_opponent: input.officialScore.opponent,
+      official_score_team: input.officialScore?.team ?? null,
+      official_score_opponent: input.officialScore?.opponent ?? null,
     })
     .select()
     .single();
@@ -606,6 +621,27 @@ export type ProjectResults = {
   clips: TaggedClip[];
   teamShots: ShotChartPoint[];
   opponentShots?: ShotChartPoint[];
+};
+
+/** Per-player tally for a Heart Stats project — no minutes/+/- (no
+ * substitutions are meaningfully tracked without a full box score's
+ * game clock discipline), just raw hustle-play counts. */
+export type PlayerHeartStatsBoxScore = {
+  number: string;
+  name: string;
+  deflections: number;
+  looseBallsRecovered: number;
+  chargesDrawn: number;
+  screenAssists: number;
+  contestedShots: number;
+  boxOutsWon: number;
+  boxOutsAttempted: number;
+};
+
+export type HeartStatsResults = {
+  team: PlayerHeartStatsBoxScore[];
+  opponent?: PlayerHeartStatsBoxScore[];
+  clips: TaggedClip[];
 };
 
 function seededRandom(seed: string) {

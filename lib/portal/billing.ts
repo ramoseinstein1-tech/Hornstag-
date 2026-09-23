@@ -14,11 +14,22 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
-import type { AnnotationScope } from "./store";
+import type { AnnotationKind, AnnotationScope } from "./store";
 
 export const PER_GAME_PRICE_PHP: Record<AnnotationScope, number> = {
   "Single Team": 450,
   "Both Teams": 950,
+};
+
+/** Heart Stats — a separate, per-game-only annotation package (no
+ * subscription bundle yet) tracking hustle/effort plays instead of a
+ * traditional box score. Priced a bit cheaper than traditional since
+ * it's a narrower stat set, but not steeply discounted — tagging
+ * subtle hustle plays takes just as much careful film-watching as
+ * counting points. */
+export const HEART_STATS_PRICE_PHP: Record<AnnotationScope, number> = {
+  "Single Team": 400,
+  "Both Teams": 800,
 };
 
 export type SubscriptionPackageKey = "rookie" | "starting_five" | "franchise";
@@ -64,6 +75,7 @@ export const SUBSCRIPTION_PACKAGE_ORDER: SubscriptionPackageKey[] = ["rookie", "
 export type CreditBatch = {
   id: string;
   scope: AnnotationScope;
+  annotationKind: AnnotationKind;
   quantityTotal: number;
   quantityRemaining: number;
   source: string;
@@ -78,6 +90,7 @@ export type CreditBatch = {
 type CreditBatchRow = {
   id: string;
   scope: AnnotationScope;
+  annotation_kind: AnnotationKind;
   quantity_total: number;
   quantity_remaining: number;
   source: string;
@@ -90,6 +103,7 @@ function mapBatchRow(row: CreditBatchRow): CreditBatch {
   return {
     id: row.id,
     scope: row.scope,
+    annotationKind: row.annotation_kind,
     quantityTotal: row.quantity_total,
     quantityRemaining: row.quantity_remaining,
     source: row.source,
@@ -136,12 +150,17 @@ function isExpired(batch: CreditBatch): boolean {
   return batch.expiresAt != null && new Date(batch.expiresAt).getTime() <= Date.now();
 }
 
-/** Sums quantity_remaining per scope across every non-expired batch —
- * what the billing page shows as the current usable balance. */
-export function creditBalance(batches: CreditBatch[]): Record<AnnotationScope, number> {
+/** Sums quantity_remaining per scope across every non-expired batch of
+ * the given annotation kind — what the billing page shows as the
+ * current usable balance. Traditional and Heart Stats credits are
+ * never summed together; they're separate pools. */
+export function creditBalance(
+  batches: CreditBatch[],
+  kind: AnnotationKind = "traditional"
+): Record<AnnotationScope, number> {
   const balance: Record<AnnotationScope, number> = { "Single Team": 0, "Both Teams": 0 };
   for (const batch of batches) {
-    if (isExpired(batch)) continue;
+    if (isExpired(batch) || batch.annotationKind !== kind) continue;
     balance[batch.scope] += batch.quantityRemaining;
   }
   return balance;

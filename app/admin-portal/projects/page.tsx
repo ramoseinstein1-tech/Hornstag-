@@ -108,7 +108,14 @@ export default function AdminProjectsPage() {
                     transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                     className="hs-panel hs-panel-hover p-4"
                   >
-                    <p className="truncate text-sm font-medium text-text">{project.name}</p>
+                    <p className="truncate text-sm font-medium text-text">
+                      {project.name}
+                      {project.annotationKind === "heart_stats" && (
+                        <span className="hs-chip !ml-2 !py-0.5 !text-[0.54rem] !border-[#ff6b6b]/40 !text-[#ff9b9b]">
+                          HEART STATS
+                        </span>
+                      )}
+                    </p>
                     <p className="mt-1 font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">
                       OWNER {project.ownerName.toUpperCase()}
                     </p>

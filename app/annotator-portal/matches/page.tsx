@@ -57,6 +57,11 @@ export default function AnnotatorMatchesPage() {
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-text">{project.name}</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                {project.annotationKind === "heart_stats" && (
+                  <span className="hs-chip !py-1 !text-[0.58rem] !border-[#ff6b6b]/40 !text-[#ff9b9b]">
+                    HEART STATS
+                  </span>
+                )}
                 <span className="hs-chip !py-1 !text-[0.58rem]">{project.scope.toUpperCase()}</span>
                 <span className="hs-chip !py-1 !text-[0.58rem]">{project.format.toUpperCase()}</span>
                 <span className="font-mono-tech text-[0.58rem] tracking-[0.08em] text-text-faint">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatClipTime, computeBoxScoreForSide, computeShotChart, computeClips } from "./results";
+import { formatClipTime, computeBoxScoreForSide, computeHeartStatsBoxScore, computeShotChart, computeClips } from "./results";
 import type { AnnotationEvent } from "./events";
 import type { VideoSegment } from "./segments";
 import type { Project, RosterPlayer } from "./store";
@@ -23,6 +23,7 @@ function project(partial: Partial<Project> & Pick<Project, "roster">): Project {
     ownerName: "Owner",
     name: "Test Game",
     scope: "Both Teams",
+    annotationKind: "traditional",
     format: "Quarters",
     opponentRoster: [],
     videoCleared: false,
@@ -68,6 +69,30 @@ describe("computeBoxScoreForSide", () => {
   it("includes a roster player with zero events at zero, not omitted", () => {
     const [box] = computeBoxScoreForSide([player1], [], [], "team");
     expect(box).toMatchObject({ number: "10", name: "Dame", pts: 0, minSeconds: 0, plusMinus: 0 });
+  });
+});
+
+describe("computeHeartStatsBoxScore", () => {
+  it("tallies hustle-stat counts per player, box_out split by made/attempted", () => {
+    const events: AnnotationEvent[] = [
+      evt({ timestampSeconds: 0, eventType: "deflection", playerId: "player-1" }),
+      evt({ timestampSeconds: 1, eventType: "deflection", playerId: "player-1" }),
+      evt({ timestampSeconds: 2, eventType: "loose_ball_recovered", playerId: "player-1" }),
+      evt({ timestampSeconds: 3, eventType: "box_out", playerId: "player-1", made: true }),
+      evt({ timestampSeconds: 4, eventType: "box_out", playerId: "player-1", made: false }),
+      evt({ timestampSeconds: 5, eventType: "charge_drawn", playerId: "opp-1", teamSide: "opponent" }),
+    ];
+    const [box] = computeHeartStatsBoxScore([player1], events, "team");
+    expect(box.deflections).toBe(2);
+    expect(box.looseBallsRecovered).toBe(1);
+    expect(box.boxOutsWon).toBe(1);
+    expect(box.boxOutsAttempted).toBe(2);
+    expect(box.chargesDrawn).toBe(0);
+  });
+
+  it("includes a roster player with zero events at zero, not omitted", () => {
+    const [box] = computeHeartStatsBoxScore([player1], [], "team");
+    expect(box).toMatchObject({ number: "10", name: "Dame", deflections: 0, boxOutsAttempted: 0 });
   });
 });
 

@@ -4,6 +4,7 @@ import { creditBalance, type CreditBatch } from "./billing";
 function batch(partial: Partial<CreditBatch> & Pick<CreditBatch, "scope" | "quantityRemaining">): CreditBatch {
   return {
     id: Math.random().toString(36),
+    annotationKind: "traditional",
     quantityTotal: partial.quantityRemaining,
     source: "per_game",
     createdAt: new Date().toISOString(),

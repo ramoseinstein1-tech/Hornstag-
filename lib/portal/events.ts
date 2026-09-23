@@ -34,7 +34,13 @@ export type EventType =
   | "substitution_in"
   | "substitution_out"
   | "timeout"
-  | "custom";
+  | "custom"
+  | "deflection"
+  | "loose_ball_recovered"
+  | "charge_drawn"
+  | "screen_assist"
+  | "contested_shot"
+  | "box_out";
 
 export const SHOT_EVENT_TYPES: readonly EventType[] = ["two_point", "three_point", "free_throw"];
 
@@ -42,6 +48,24 @@ export const SHOT_EVENT_TYPES: readonly EventType[] = ["two_point", "three_point
  * timestamp is all it needs (confirmed with the user: "don't think we
  * need to record whose timeout it is"). */
 export const TEAMLESS_EVENT_TYPES: readonly EventType[] = ["timeout"];
+
+/** Heart Stats package — hustle/effort plays tagged instead of a
+ * traditional box score. All six are player-attributed like the
+ * existing types (nothing teamless). */
+export const HEART_STAT_EVENT_TYPES: readonly EventType[] = [
+  "deflection",
+  "loose_ball_recovered",
+  "charge_drawn",
+  "screen_assist",
+  "contested_shot",
+  "box_out",
+];
+
+/** Box Out is the one Heart Stat with a successful/missed outcome —
+ * reuses the same "made"-checkbox UI shot types get (and the W
+ * hotkey), just without the court diagram since shot location doesn't
+ * apply. */
+export const BOX_OUT_EVENT_TYPE: EventType = "box_out";
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   two_point: "Two Point",
@@ -61,6 +85,12 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   substitution_out: "Substitution Out",
   timeout: "Timeout",
   custom: "Custom",
+  deflection: "Deflection",
+  loose_ball_recovered: "Loose Ball Recovered",
+  charge_drawn: "Charge Drawn",
+  screen_assist: "Screen Assist",
+  contested_shot: "Contested Shot",
+  box_out: "Box Out",
 };
 
 /** matches Project.roster vs Project.opponentRoster — simpler than
