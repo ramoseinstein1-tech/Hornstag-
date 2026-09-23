@@ -27,15 +27,12 @@ const TRADITIONAL_EVENT_TYPE_ORDER: EventType[] = [
   "block",
   "turnover",
   "foul",
-  "offensive_foul",
-  "defensive_foul",
   "technical_foul",
   "offensive_rebound",
   "defensive_rebound",
   "substitution_in",
   "substitution_out",
   "timeout",
-  "custom",
 ];
 
 const HEART_STATS_EVENT_TYPE_ORDER: EventType[] = [...HEART_STAT_EVENT_TYPES, "custom"];
