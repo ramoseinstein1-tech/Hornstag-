@@ -51,6 +51,13 @@ export default function UploadProjectPage() {
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [uploadStartedAt, setUploadStartedAt] = useState<number | null>(null);
 
+  // Set once createProject succeeds, and deliberately NOT cleared on a
+  // failed upload — retrying re-attempts the video PUT against this
+  // SAME project instead of calling createProject again, which would
+  // spend a second credit and leave the first (already-charged, stuck)
+  // project orphaned. See handleSubmit.
+  const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
+
   const [savedTeams, setSavedTeams] = useState<SavedTeam[]>([]);
   const [selectedSavedTeamId, setSelectedSavedTeamId] = useState("");
   const [saveAsTeam, setSaveAsTeam] = useState(false);
@@ -122,53 +129,63 @@ export default function UploadProjectPage() {
     setUploadStartedAt(null);
     setStatus("submitting");
 
-    const createResult = await createProject(user.id, {
-      name: name.trim(),
-      opponent: opponent.trim() || undefined,
-      gameDate: gameDate || undefined,
-      scope,
-      annotationKind,
-      format,
-      roster: roster.filter((p) => p.number.trim() && p.name.trim()),
-      opponentRoster:
-        scope === "Both Teams"
-          ? opponentRoster.filter((p) => p.number.trim() && p.name.trim())
-          : undefined,
-      notes: notes.trim() || undefined,
-      fileName: file!.name,
-      fileSize: formatFileSize(file!.size),
-      officialScore:
-        annotationKind === "traditional"
-          ? { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) }
-          : undefined,
-    }, user.name);
+    // A retry after a failed upload reuses the project createProject
+    // already made (and already spent a credit for) instead of calling
+    // it again — otherwise a flaky network mid-upload would both strand
+    // a charged, video-less project AND charge a second credit for the
+    // resubmit.
+    let projectId = createdProjectId;
+    if (!projectId) {
+      const createResult = await createProject(user.id, {
+        name: name.trim(),
+        opponent: opponent.trim() || undefined,
+        gameDate: gameDate || undefined,
+        scope,
+        annotationKind,
+        format,
+        roster: roster.filter((p) => p.number.trim() && p.name.trim()),
+        opponentRoster:
+          scope === "Both Teams"
+            ? opponentRoster.filter((p) => p.number.trim() && p.name.trim())
+            : undefined,
+        notes: notes.trim() || undefined,
+        fileName: file!.name,
+        fileSize: formatFileSize(file!.size),
+        officialScore:
+          annotationKind === "traditional"
+            ? { team: Number(teamScoreInput), opponent: Number(opponentScoreInput) }
+            : undefined,
+      }, user.name);
 
-    if (!createResult.ok) {
-      setUploadError(createResult.error);
-      setStatus("idle");
-      return;
-    }
-    const project = createResult.project;
+      if (!createResult.ok) {
+        setUploadError(createResult.error);
+        setStatus("idle");
+        return;
+      }
+      projectId = createResult.project.id;
+      setCreatedProjectId(projectId);
 
-    if (saveAsTeam && newTeamName.trim()) {
-      const validRoster = roster.filter((p) => p.number.trim() && p.name.trim());
-      void createSavedTeam(user.id, newTeamName.trim(), validRoster).then((result) => {
-        if (result.ok) getSavedTeams(user.id).then(setSavedTeams);
-      });
+      if (saveAsTeam && newTeamName.trim()) {
+        const validRoster = roster.filter((p) => p.number.trim() && p.name.trim());
+        void createSavedTeam(user.id, newTeamName.trim(), validRoster).then((result) => {
+          if (result.ok) getSavedTeams(user.id).then(setSavedTeams);
+        });
+      }
     }
 
     setUploadStartedAt(Date.now());
-    const uploadResult = await uploadProjectVideo(project.id, file!, setProgress);
+    const uploadResult = await uploadProjectVideo(projectId, file!, setProgress);
     if (!uploadResult.ok) {
-      // The project row already exists at this point — it just falls back
-      // to the shared sample clip in the workspace until the video is
-      // retried. Surface the failure clearly rather than pretending it
-      // succeeded.
+      // The project row already exists at this point (createdProjectId
+      // stays set) — clicking SUBMIT again retries the video PUT against
+      // it rather than creating a duplicate. Surface the failure clearly
+      // rather than pretending it succeeded.
       setUploadError(uploadResult.error);
       setStatus("idle");
       return;
     }
 
+    setCreatedProjectId(null);
     setStatus("done");
   }
 
@@ -217,6 +234,7 @@ export default function UploadProjectPage() {
                 setSaveAsTeam(false);
                 setNewTeamName("");
                 setAnnotationKind("traditional");
+                setCreatedProjectId(null);
               }}
               className="hs-btn-secondary flex-1"
             >
@@ -251,9 +269,18 @@ export default function UploadProjectPage() {
           >
             <div className="flex items-start gap-2.5 rounded-md border border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.06] px-4 py-3">
               <span className="mt-0.5 text-[#ff6b6b]">⚠</span>
-              <p className="font-mono-tech text-[0.68rem] leading-relaxed tracking-wide text-[#ff9b9b]">
-                {uploadError}
-              </p>
+              <div>
+                <p className="font-mono-tech text-[0.68rem] leading-relaxed tracking-wide text-[#ff9b9b]">
+                  {uploadError}
+                </p>
+                {createdProjectId && (
+                  <p className="mt-1.5 font-mono-tech text-[0.6rem] leading-relaxed tracking-wide text-text-faint">
+                    Your project details are already saved and your credit was already used —
+                    click RETRY UPLOAD below to try the video again. This won&rsquo;t charge you
+                    a second time.
+                  </p>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -626,7 +653,7 @@ export default function UploadProjectPage() {
                 exit={{ opacity: 0 }}
                 className="flex items-center gap-2"
               >
-                SUBMIT PROJECT
+                {createdProjectId ? "RETRY UPLOAD" : "SUBMIT PROJECT"}
                 <span className="arrow" aria-hidden="true">
                   →
                 </span>
