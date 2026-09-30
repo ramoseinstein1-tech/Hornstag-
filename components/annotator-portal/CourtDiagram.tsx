@@ -15,7 +15,11 @@ import type { ShotLocation } from "@/lib/portal/events";
 
 export const COURT_W = 940;
 export const COURT_H = 500;
-const MARGIN = 40;
+// Was 40 — left a wide dark band around the court itself, wasting the
+// bigger click area the modal now gives this diagram. 14 pulls the
+// boundary rect out toward the canvas edges instead, so more of the
+// available space is actual playable (and clickable) court.
+const MARGIN = 14;
 const KEY_DEPTH = 150;
 const KEY_HEIGHT = 160;
 const FT_CIRCLE_R = 60;
