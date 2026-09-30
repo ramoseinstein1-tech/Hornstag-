@@ -494,7 +494,21 @@ export default function AnnotationWorkspace({
                 onResume={handleResumeClock}
               />
             )}
-            <EventsTimeline durationSeconds={fullDuration} events={events} onSeek={handleSeek} segments={segments} />
+            <EventsTimeline
+              durationSeconds={fullDuration}
+              events={events}
+              onSeek={handleSeek}
+              segments={segments}
+              kind={currentProject.annotationKind}
+            />
+            {tab === "annotate" && segments && (
+              <SegmentStepper
+                segments={segments}
+                activeIndex={activeSegmentIndex}
+                events={events}
+                onSelect={handleSelectSegment}
+              />
+            )}
           </div>
 
           <div className="flex flex-col gap-6">
@@ -511,12 +525,6 @@ export default function AnnotationWorkspace({
             {tab === "annotate" && (
               segments ? (
                 <>
-                  <SegmentStepper
-                    segments={segments}
-                    activeIndex={activeSegmentIndex}
-                    events={events}
-                    onSelect={handleSelectSegment}
-                  />
                   {readOnly ? (
                     <div className="hs-panel p-5 text-center text-sm text-text-muted">{lockedMessage}</div>
                   ) : (

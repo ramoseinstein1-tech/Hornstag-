@@ -209,7 +209,13 @@ export default function AdminProjectReviewPage({
               Loading video…
             </div>
           )}
-          <EventsTimeline durationSeconds={duration} events={events} onSeek={handleSeek} segments={segments} />
+          <EventsTimeline
+            durationSeconds={duration}
+            events={events}
+            onSeek={handleSeek}
+            segments={segments}
+            kind={project.annotationKind}
+          />
         </div>
 
         <div className="flex flex-col gap-6">
