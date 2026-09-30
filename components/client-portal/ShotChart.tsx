@@ -28,8 +28,7 @@ export default function ShotChart({ shots }: { shots: ShotChartPoint[] }) {
           initial={{ opacity: 0, scale: 0 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.35, delay: Math.min(i * 0.025, 0.9), ease: [0.16, 1, 0.3, 1] }}
-          style={{ transformOrigin: `${s.x * COURT_W}px ${s.y * COURT_H}px` }}
-          transform={`translate(${s.x * COURT_W}, ${s.y * COURT_H})`}
+          style={{ x: s.x * COURT_W, y: s.y * COURT_H }}
         >
           <circle
             r={9}
