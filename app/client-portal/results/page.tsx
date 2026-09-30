@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
   getProjects,
@@ -33,24 +34,218 @@ function formatPlusMinus(n: number): string {
   return n > 0 ? `+${n}` : String(n);
 }
 
-function StatTile({ label, value }: { label: string; value: string | number }) {
+const fadeUp = {
+  initial: { opacity: 0, y: 16 },
+  animate: { opacity: 1, y: 0 },
+};
+
+/** A soft radial color bloom, sized/positioned by the caller — reuses the
+ * marketing site's .bloom utility so the portal shares the same ambient
+ * atmosphere instead of feeling like a flatter, separate product. */
+function Bloom({ style }: { style?: React.CSSProperties }) {
+  return <div className="bloom" style={{ background: "var(--orange)", ...style }} aria-hidden="true" />;
+}
+
+const OUTCOME_STYLES: Record<"team" | "opponent" | "tie", { label: string; className: string }> = {
+  team: { label: "WIN", className: "!border-[#7cd48a]/50 !text-[#7cd48a]" },
+  opponent: { label: "LOSS", className: "!border-[#ff9b9b]/50 !text-[#ff9b9b]" },
+  tie: { label: "TIE", className: "!border-orange/50 !text-orange-bright" },
+};
+
+function MiniStatRow({ label, totals, tone }: { label: string; totals: ReturnType<typeof teamTotals>; tone: "you" | "opp" }) {
   return (
-    <div className="hs-panel sheen-top p-4 text-center">
-      <div className="font-display text-xl font-semibold text-orange-bright">{value}</div>
-      <div className="mt-1 font-mono-tech text-[0.56rem] tracking-[0.12em] text-text-faint">
+    <div className="flex flex-col gap-3">
+      <p
+        className={`font-mono-tech text-[0.6rem] tracking-[0.14em] ${tone === "you" ? "text-orange-bright" : "text-text-muted"}`}
+      >
         {label}
+      </p>
+      <div className="grid grid-cols-4 gap-2.5">
+        {[
+          ["PTS", totals.pts],
+          ["REB", totals.reb],
+          ["AST", totals.ast],
+          ["FG%", `${totals.fgPct}%`],
+        ].map(([l, v]) => (
+          <div key={l} className="rounded-md border border-border bg-background/40 p-3 text-center backdrop-blur-sm">
+            <div className="font-display text-lg font-semibold tabular-nums text-text">{v}</div>
+            <div className="mt-0.5 font-mono-tech text-[0.52rem] tracking-[0.1em] text-text-faint">{l}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxScore[] }) {
+/** The centerpiece of the page — final score, W/L badge, and a compact
+ * stat row per side, replacing what used to be two separate sections
+ * (a plain "final score" strip, then a disconnected stat-tile grid). */
+function GameScoreHero({
+  project,
+  yourLabel,
+  oppLabel,
+  yourTotals,
+  oppTotals,
+}: {
+  project: Project;
+  yourLabel: string;
+  oppLabel?: string;
+  yourTotals: ReturnType<typeof teamTotals>;
+  oppTotals: ReturnType<typeof teamTotals> | null;
+}) {
+  const outcome = project.officialScore ? officialOutcome(project.officialScore) : null;
+
+  return (
+    <motion.div
+      {...fadeUp}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      className="hs-panel sheen-top relative mt-8 overflow-hidden p-6 sm:p-9"
+    >
+      <Bloom style={{ width: 460, height: 460, top: -220, left: "50%", transform: "translateX(-50%)" }} />
+
+      <div className="relative z-10 flex flex-col items-center gap-5 text-center">
+        {outcome && (
+          <span className={`hs-chip ${OUTCOME_STYLES[outcome].className}`}>{OUTCOME_STYLES[outcome].label}</span>
+        )}
+
+        {project.officialScore ? (
+          <div className="flex items-center gap-5 sm:gap-8">
+            <div className="text-right">
+              <p className="max-w-[9rem] truncate font-mono-tech text-[0.62rem] tracking-[0.12em] text-text-muted sm:max-w-none">
+                {yourLabel.toUpperCase()}
+              </p>
+              <p className="display-lg tabular-nums text-text">{project.officialScore.team}</p>
+            </div>
+            <span className="display-md text-text-faint">–</span>
+            <div className="text-left">
+              <p className="max-w-[9rem] truncate font-mono-tech text-[0.62rem] tracking-[0.12em] text-text-muted sm:max-w-none">
+                {(oppLabel ?? "OPPONENT").toUpperCase()}
+              </p>
+              <p className="display-lg tabular-nums text-text">{project.officialScore.opponent}</p>
+            </div>
+          </div>
+        ) : (
+          <h2 className="display-md text-text">{project.name}</h2>
+        )}
+
+        {project.scoreCheckNote && (
+          <div className="max-w-md rounded-md border p-3" style={{ borderColor: "var(--border-orange)" }}>
+            <p className="mb-1 font-mono-tech text-[0.56rem] tracking-[0.14em] text-orange-bright">SCORE CHECK NOTE</p>
+            <p className="text-xs leading-relaxed text-text-muted">{project.scoreCheckNote}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="relative z-10 mt-8 grid grid-cols-1 gap-6 border-t border-border pt-7 sm:grid-cols-2">
+        <MiniStatRow label={project.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"} totals={yourTotals} tone="you" />
+        {oppTotals && <MiniStatRow label={oppLabel ?? "OPPONENT"} totals={oppTotals} tone="opp" />}
+      </div>
+    </motion.div>
+  );
+}
+
+function sumHeartStats(players: PlayerHeartStatsBoxScore[]) {
+  return players.reduce(
+    (sum, p) => ({
+      deflections: sum.deflections + p.deflections,
+      looseBallsRecovered: sum.looseBallsRecovered + p.looseBallsRecovered,
+      chargesDrawn: sum.chargesDrawn + p.chargesDrawn,
+      screenAssists: sum.screenAssists + p.screenAssists,
+      contestedShots: sum.contestedShots + p.contestedShots,
+      boxOutsWon: sum.boxOutsWon + p.boxOutsWon,
+      boxOutsAttempted: sum.boxOutsAttempted + p.boxOutsAttempted,
+    }),
+    { deflections: 0, looseBallsRecovered: 0, chargesDrawn: 0, screenAssists: 0, contestedShots: 0, boxOutsWon: 0, boxOutsAttempted: 0 }
+  );
+}
+
+function HeartStatsHero({ project, heartResults }: { project: Project; heartResults: HeartStatsResults }) {
+  const yourSum = useMemo(() => sumHeartStats(heartResults.team), [heartResults.team]);
+  const oppSum = useMemo(() => (heartResults.opponent ? sumHeartStats(heartResults.opponent) : null), [heartResults.opponent]);
+  const tiles: [string, number][] = [
+    ["DEFL", yourSum.deflections],
+    ["LOOSE BALLS", yourSum.looseBallsRecovered],
+    ["CHARGES", yourSum.chargesDrawn],
+    ["SCREEN AST", yourSum.screenAssists],
+    ["CONTESTED", yourSum.contestedShots],
+    ["BOX OUTS", yourSum.boxOutsWon],
+  ];
+  const oppTiles: [string, number][] | null = oppSum
+    ? [
+        ["DEFL", oppSum.deflections],
+        ["LOOSE BALLS", oppSum.looseBallsRecovered],
+        ["CHARGES", oppSum.chargesDrawn],
+        ["SCREEN AST", oppSum.screenAssists],
+        ["CONTESTED", oppSum.contestedShots],
+        ["BOX OUTS", oppSum.boxOutsWon],
+      ]
+    : null;
+
+  return (
+    <motion.div
+      {...fadeUp}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      className="hs-panel sheen-top relative mt-8 overflow-hidden p-6 sm:p-9"
+    >
+      <Bloom style={{ width: 420, height: 420, top: -200, left: "50%", transform: "translateX(-50%)", opacity: 0.4 }} />
+      <div className="relative z-10 flex flex-col items-center gap-3 text-center">
+        <span className="hs-chip !border-[#ff6b6b]/40 !text-[#ff9b9b]">HEART STATS</span>
+        <h2 className="display-md text-text">{project.name}</h2>
+        <p className="max-w-sm text-xs leading-relaxed text-text-faint">
+          Hustle/effort plays only — no official score, shot chart, or playing-time tracking applies to this package.
+        </p>
+      </div>
+
+      <div className="relative z-10 mt-8 flex flex-col gap-6 border-t border-border pt-7">
+        <div className="flex flex-col gap-3">
+          <p className="font-mono-tech text-[0.6rem] tracking-[0.14em] text-orange-bright">
+            {project.scope === "Both Teams" ? "YOUR TEAM TOTALS" : "TEAM TOTALS"}
+          </p>
+          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-6">
+            {tiles.map(([l, v]) => (
+              <div key={l} className="rounded-md border border-border bg-background/40 p-3 text-center backdrop-blur-sm">
+                <div className="font-display text-lg font-semibold tabular-nums text-text">{v}</div>
+                <div className="mt-0.5 font-mono-tech text-[0.5rem] tracking-[0.08em] text-text-faint">{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {oppTiles && (
+          <div className="flex flex-col gap-3">
+            <p className="font-mono-tech text-[0.6rem] tracking-[0.14em] text-text-muted">
+              {project.opponent ?? "OPPONENT"} TOTALS
+            </p>
+            <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-6">
+              {oppTiles.map(([l, v]) => (
+                <div key={l} className="rounded-md border border-border bg-background/40 p-3 text-center backdrop-blur-sm">
+                  <div className="font-display text-lg font-semibold tabular-nums text-text">{v}</div>
+                  <div className="mt-0.5 font-mono-tech text-[0.5rem] tracking-[0.08em] text-text-faint">{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="mb-4 flex items-center gap-3 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
+      <span className="h-px w-4 bg-orange/50" aria-hidden="true" />
+      {children}
+    </h2>
+  );
+}
+
+function BoxScoreTable({ title, players, accent }: { title: string; players: PlayerBoxScore[]; accent: boolean }) {
   const totals = teamTotals(players);
   const totalMinSeconds = players.reduce((sum, p) => sum + p.minSeconds, 0);
 
   return (
-    <div className="hs-panel sheen-top p-5">
-      <h3 className="mb-4 font-mono-tech text-[0.64rem] tracking-[0.18em] text-text-soft">
+    <div className="hs-panel sheen-top overflow-hidden p-5" style={accent ? { borderColor: "var(--border-orange)" } : undefined}>
+      <h3 className={`mb-4 font-mono-tech text-[0.64rem] tracking-[0.18em] ${accent ? "text-orange-bright" : "text-text-soft"}`}>
         {title}
       </h3>
       <div className="overflow-x-auto">
@@ -69,26 +264,26 @@ function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxSc
           </thead>
           <tbody>
             {players.map((p) => (
-              <tr key={`${p.number}-${p.name}`} className="border-b border-border/60 last:border-0">
+              <tr key={`${p.number}-${p.name}`} className="border-b border-border/60 transition-colors last:border-0 hover:bg-surface-light/60">
                 <td className="py-2.5 pr-4 text-text">
                   #{p.number} {p.name}
                 </td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{formatClockMMSS(p.minSeconds)}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-orange-bright">{p.pts}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.reb}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.ast}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.stl}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.blk}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.tov}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{formatClockMMSS(p.minSeconds)}</td>
+                <td className="py-2.5 pr-4 font-mono-tech text-base font-semibold tabular-nums text-orange-bright">{p.pts}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.reb}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.ast}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.stl}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.blk}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.tov}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">
                   {p.fgm}/{p.fga}
                 </td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{fgPctOf(p.fgm, p.fga)}%</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{fgPctOf(p.fgm, p.fga)}%</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">
                   {p.tpm}/{p.tpa}
                 </td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{fgPctOf(p.tpm, p.tpa)}%</td>
-                <td className={`py-2.5 pr-4 font-mono-tech ${p.plusMinus > 0 ? "text-[#7cd48a]" : p.plusMinus < 0 ? "text-[#ff9b9b]" : "text-text-muted"}`}>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{fgPctOf(p.tpm, p.tpa)}%</td>
+                <td className={`py-2.5 pr-4 font-mono-tech tabular-nums ${p.plusMinus > 0 ? "text-[#7cd48a]" : p.plusMinus < 0 ? "text-[#ff9b9b]" : "text-text-muted"}`}>
                   {formatPlusMinus(p.plusMinus)}
                 </td>
               </tr>
@@ -97,21 +292,21 @@ function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxSc
           <tfoot>
             <tr className="border-t border-border text-left">
               <td className="pt-2.5 pr-4 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">TOTAL</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{formatClockMMSS(totalMinSeconds)}</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-orange-bright">{totals.pts}</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.reb}</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.ast}</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.stl}</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.blk}</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.tov}</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{formatClockMMSS(totalMinSeconds)}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-orange-bright">{totals.pts}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{totals.reb}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{totals.ast}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{totals.stl}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{totals.blk}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{totals.tov}</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">
                 {totals.fgm}/{totals.fga}
               </td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.fgPct}%</td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{totals.fgPct}%</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">
                 {totals.tpm}/{totals.tpa}
               </td>
-              <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">{totals.tpPct}%</td>
+              <td className="pt-2.5 pr-4 font-mono-tech tabular-nums text-text-faint">{totals.tpPct}%</td>
               <td className="pt-2.5 pr-4 font-mono-tech text-text-faint">—</td>
             </tr>
           </tfoot>
@@ -121,10 +316,10 @@ function BoxScoreTable({ title, players }: { title: string; players: PlayerBoxSc
   );
 }
 
-function HeartStatsBoxScoreTable({ title, players }: { title: string; players: PlayerHeartStatsBoxScore[] }) {
+function HeartStatsBoxScoreTable({ title, players, accent }: { title: string; players: PlayerHeartStatsBoxScore[]; accent: boolean }) {
   return (
-    <div className="hs-panel sheen-top p-5">
-      <h3 className="mb-4 font-mono-tech text-[0.64rem] tracking-[0.18em] text-text-soft">
+    <div className="hs-panel sheen-top overflow-hidden p-5" style={accent ? { borderColor: "var(--border-orange)" } : undefined}>
+      <h3 className={`mb-4 font-mono-tech text-[0.64rem] tracking-[0.18em] ${accent ? "text-orange-bright" : "text-text-soft"}`}>
         {title}
       </h3>
       <div className="overflow-x-auto">
@@ -140,16 +335,16 @@ function HeartStatsBoxScoreTable({ title, players }: { title: string; players: P
           </thead>
           <tbody>
             {players.map((p) => (
-              <tr key={`${p.number}-${p.name}`} className="border-b border-border/60 last:border-0">
+              <tr key={`${p.number}-${p.name}`} className="border-b border-border/60 transition-colors last:border-0 hover:bg-surface-light/60">
                 <td className="py-2.5 pr-4 text-text">
                   #{p.number} {p.name}
                 </td>
-                <td className="py-2.5 pr-4 font-mono-tech text-orange-bright">{p.deflections}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.looseBallsRecovered}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.chargesDrawn}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.screenAssists}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">{p.contestedShots}</td>
-                <td className="py-2.5 pr-4 font-mono-tech text-text-muted">
+                <td className="py-2.5 pr-4 font-mono-tech text-base font-semibold tabular-nums text-orange-bright">{p.deflections}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.looseBallsRecovered}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.chargesDrawn}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.screenAssists}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.contestedShots}</td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">
                   {p.boxOutsWon}/{p.boxOutsAttempted}
                 </td>
               </tr>
@@ -167,7 +362,7 @@ function HeartStatsBoxScoreTable({ title, players }: { title: string; players: P
 // video file involved.
 const CLIP_PREVIEW_SECONDS = 6;
 
-function ClipCard({ projectId, clip }: { projectId: string; clip: TaggedClip }) {
+function ClipCard({ projectId, clip, index }: { projectId: string; clip: TaggedClip; index: number }) {
   const [open, setOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -197,7 +392,10 @@ function ClipCard({ projectId, clip }: { projectId: string; clip: TaggedClip }) 
   }
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: Math.min(index * 0.04, 0.4), ease: [0.16, 1, 0.3, 1] }}
       role="button"
       tabIndex={0}
       onClick={handleToggle}
@@ -209,10 +407,10 @@ function ClipCard({ projectId, clip }: { projectId: string; clip: TaggedClip }) 
         className="relative flex h-28 flex-none items-center justify-center"
         style={{
           background:
-            "linear-gradient(160deg, rgba(255,106,0,0.16), rgba(255,106,0,0.02))",
+            "linear-gradient(160deg, rgba(255,106,0,0.18), rgba(255,106,0,0.02))",
         }}
       >
-        <span className="flex h-10 w-10 items-center justify-center rounded-full border border-orange/40 bg-background/60 text-orange-bright">
+        <span className="flex h-10 w-10 items-center justify-center rounded-full border border-orange/40 bg-background/60 text-orange-bright shadow-[0_0_24px_-4px_rgba(255,106,0,0.5)]">
           {loading ? "…" : "▶"}
         </span>
         <span className="absolute bottom-2 right-2 font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint">
@@ -253,11 +451,11 @@ function ClipCard({ projectId, clip }: { projectId: string; clip: TaggedClip }) 
           </p>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
-function PeriodClipCard({ projectId, segment }: { projectId: string; segment: VideoSegment }) {
+function PeriodClipCard({ projectId, segment, index }: { projectId: string; segment: VideoSegment; index: number }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -277,7 +475,10 @@ function PeriodClipCard({ projectId, segment }: { projectId: string; segment: Vi
   }
 
   return (
-    <button
+    <motion.button
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.3), ease: [0.16, 1, 0.3, 1] }}
       type="button"
       onClick={handleOpen}
       disabled={loading}
@@ -294,7 +495,7 @@ function PeriodClipCard({ projectId, segment }: { projectId: string; segment: Vi
       <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full border border-orange/40 bg-orange/10 text-orange-bright">
         {loading ? "…" : "▶"}
       </span>
-    </button>
+    </motion.button>
   );
 }
 
@@ -574,16 +775,19 @@ export default function ResultsPage() {
 
   return (
     <div>
-      <div>
-        <p className="eyebrow mb-3">CLIENT PORTAL</p>
-        <h1 className="display-md uppercase">
-          <span className="text-gradient">Game </span>
-          <span className="text-gradient-orange">Results.</span>
-        </h1>
-        <p className="mt-2 max-w-lg text-sm text-text-muted">
-          Team stats, player stats, tagged clips, and downloadable reports
-          for each project.
-        </p>
+      <div className="relative">
+        <Bloom style={{ width: 380, height: 380, top: -160, left: -80, opacity: 0.3 }} />
+        <div className="relative">
+          <p className="eyebrow mb-3">CLIENT PORTAL</p>
+          <h1 className="display-md uppercase">
+            <span className="text-gradient">Game </span>
+            <span className="text-gradient-orange">Results.</span>
+          </h1>
+          <p className="mt-2 max-w-lg text-sm text-text-muted">
+            Team stats, player stats, tagged clips, and downloadable reports
+            for each project.
+          </p>
+        </div>
       </div>
 
       <div className="mt-8 max-w-md">
@@ -606,9 +810,7 @@ export default function ResultsPage() {
 
       {selected && videoIssues.length > 0 && (
         <div className="mt-8">
-          <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-            VIDEO ISSUES
-          </h2>
+          <SectionHeading>VIDEO ISSUES</SectionHeading>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {videoIssues.map((issue) => (
               <VideoIssueCard key={issue.id} issue={issue} />
@@ -619,203 +821,144 @@ export default function ResultsPage() {
 
       {selected && selected.status !== "Completed" && (
         <div
-          className="hs-panel mt-8 flex flex-col items-center justify-center gap-3 p-14 text-center"
+          className="hs-panel relative mt-8 flex flex-col items-center justify-center gap-3 overflow-hidden p-14 text-center"
           style={{ borderStyle: "dashed" }}
         >
-          <span className="hs-chip">{PENDING_COPY[selected.status].chip}</span>
-          <p className="max-w-sm text-sm text-text-faint">{PENDING_COPY[selected.status].message(selected)}</p>
+          <Bloom style={{ width: 320, height: 320, top: -140, left: "50%", transform: "translateX(-50%)", opacity: 0.2 }} />
+          <span className="relative hs-chip">{PENDING_COPY[selected.status].chip}</span>
+          <p className="relative max-w-sm text-sm text-text-faint">{PENDING_COPY[selected.status].message(selected)}</p>
         </div>
       )}
 
-      {selected && results && yourTotals && (
-        <>
-          {selected.officialScore && (
-            <div className="hs-panel sheen-top mt-8 flex flex-wrap items-center justify-between gap-4 p-5">
-              <div>
-                <p className="font-mono-tech text-[0.6rem] tracking-[0.16em] text-text-faint">FINAL SCORE</p>
-                <p className="mt-1 font-display text-2xl font-semibold text-text">
-                  {selected.officialScore.team}–{selected.officialScore.opponent}
-                </p>
-              </div>
-              <span className="hs-chip !border-orange/50 !text-orange-bright">
-                {officialOutcome(selected.officialScore) === "tie"
-                  ? "TIE"
-                  : officialOutcome(selected.officialScore) === "team"
-                    ? "WIN"
-                    : "LOSS"}
-              </span>
-            </div>
-          )}
-
-          {selected.scoreCheckNote && (
-            <div className="hs-panel mt-4 p-4" style={{ borderColor: "var(--border-orange)" }}>
-              <p className="mb-1.5 font-mono-tech text-[0.58rem] tracking-[0.14em] text-orange-bright">
-                SCORE CHECK NOTE
-              </p>
-              <p className="text-sm leading-relaxed text-text-muted">{selected.scoreCheckNote}</p>
-            </div>
-          )}
-
-          <div className="mt-10">
-            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              TEAM STATS
-            </h2>
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div>
-                <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.14em] text-orange-bright">
-                  {selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
-                </p>
-                <div className="grid grid-cols-4 gap-3">
-                  <StatTile label="PTS" value={yourTotals.pts} />
-                  <StatTile label="REB" value={yourTotals.reb} />
-                  <StatTile label="AST" value={yourTotals.ast} />
-                  <StatTile label="FG%" value={`${yourTotals.fgPct}%`} />
-                </div>
-              </div>
-
-              {oppTotals && (
-                <div>
-                  <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.14em] text-text-muted">
-                    {selected.opponent ?? "OPPONENT"}
-                  </p>
-                  <div className="grid grid-cols-4 gap-3">
-                    <StatTile label="PTS" value={oppTotals.pts} />
-                    <StatTile label="REB" value={oppTotals.reb} />
-                    <StatTile label="AST" value={oppTotals.ast} />
-                    <StatTile label="FG%" value={`${oppTotals.fgPct}%`} />
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-10 flex flex-col gap-6">
-            <h2 className="font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              PLAYER STATS
-            </h2>
-            <BoxScoreTable
-              title={selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
-              players={results.team}
+      <AnimatePresence mode="wait">
+        {selected && results && yourTotals && (
+          <motion.div key={selected.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <GameScoreHero
+              project={selected}
+              yourLabel={selected.scope === "Both Teams" ? "Your Team" : selected.name}
+              oppLabel={selected.opponent}
+              yourTotals={yourTotals}
+              oppTotals={oppTotals}
             />
-            {results.opponent && (
-              <BoxScoreTable title={selected.opponent ?? "OPPONENT"} players={results.opponent} />
-            )}
-          </div>
 
-          <div className="mt-10">
-            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              SHOT CHART
-            </h2>
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div>
-                <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.14em] text-orange-bright">
-                  {selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
-                </p>
-                <ShotChart shots={results.teamShots} />
-              </div>
-              {results.opponentShots && (
-                <div>
-                  <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.14em] text-text-muted">
-                    {selected.opponent ?? "OPPONENT"}
-                  </p>
-                  <ShotChart shots={results.opponentShots} />
-                </div>
+            <div className="mt-10 flex flex-col gap-6">
+              <SectionHeading>PLAYER STATS</SectionHeading>
+              <BoxScoreTable
+                title={selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
+                players={results.team}
+                accent
+              />
+              {results.opponent && (
+                <BoxScoreTable title={selected.opponent ?? "OPPONENT"} players={results.opponent} accent={false} />
               )}
             </div>
-          </div>
 
-          {periodClips.length > 0 && (
             <div className="mt-10">
-              <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-                PERIOD CLIPS
-              </h2>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {periodClips.map((seg) => (
-                  <PeriodClipCard key={seg.label} projectId={selected.id} segment={seg} />
+              <SectionHeading>SHOT CHART</SectionHeading>
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <div>
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="font-mono-tech text-[0.6rem] tracking-[0.14em] text-orange-bright">
+                      {selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center gap-1.5 font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">
+                        <span className="h-2 w-2 rounded-full border-2 border-orange-bright bg-orange/20" /> MADE
+                      </span>
+                      <span className="flex items-center gap-1.5 font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">
+                        <span className="h-2 w-2 rounded-full border-2 border-[#ff9b9b]/60 bg-[#ff6b6b]/10" /> MISSED
+                      </span>
+                    </div>
+                  </div>
+                  <ShotChart shots={results.teamShots} />
+                </div>
+                {results.opponentShots && (
+                  <div>
+                    <p className="mb-3 font-mono-tech text-[0.6rem] tracking-[0.14em] text-text-muted">
+                      {selected.opponent ?? "OPPONENT"}
+                    </p>
+                    <ShotChart shots={results.opponentShots} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {periodClips.length > 0 && (
+              <div className="mt-10">
+                <SectionHeading>PERIOD CLIPS</SectionHeading>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {periodClips.map((seg, i) => (
+                    <PeriodClipCard key={seg.label} projectId={selected.id} segment={seg} index={i} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-10">
+              <SectionHeading>TAGGED CLIPS</SectionHeading>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {results.clips.map((c, i) => (
+                  <ClipCard key={c.id} projectId={selected.id} clip={c} index={i} />
                 ))}
               </div>
             </div>
-          )}
 
-          <div className="mt-10">
-            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              TAGGED CLIPS
-            </h2>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {results.clips.map((c) => (
-                <ClipCard key={c.id} projectId={selected.id} clip={c} />
-              ))}
+            <div className="mt-10 mb-2">
+              <SectionHeading>REPORTS</SectionHeading>
+              <div className="flex flex-wrap gap-3">
+                <button onClick={handleDownloadBoxScore} className="hs-btn-secondary">
+                  DOWNLOAD BOX SCORE (CSV)
+                </button>
+                <button onClick={handleDownloadEventLog} className="hs-btn-secondary">
+                  DOWNLOAD EVENT LOG (CSV)
+                </button>
+                <button onClick={handleDownloadFullReport} className="hs-btn-secondary">
+                  DOWNLOAD FULL REPORT (CSV)
+                </button>
+              </div>
             </div>
-          </div>
+          </motion.div>
+        )}
 
-          <div className="mt-10 mb-2">
-            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              REPORTS
-            </h2>
-            <div className="flex flex-wrap gap-3">
-              <button onClick={handleDownloadBoxScore} className="hs-btn-secondary">
-                DOWNLOAD BOX SCORE (CSV)
-              </button>
-              <button onClick={handleDownloadEventLog} className="hs-btn-secondary">
-                DOWNLOAD EVENT LOG (CSV)
-              </button>
-              <button onClick={handleDownloadFullReport} className="hs-btn-secondary">
-                DOWNLOAD FULL REPORT (CSV)
-              </button>
+        {selected && selected.annotationKind === "heart_stats" && heartResults && (
+          <motion.div key={selected.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <HeartStatsHero project={selected} heartResults={heartResults} />
+
+            <div className="mt-10 flex flex-col gap-6">
+              <SectionHeading>HEART STATS BOX SCORE</SectionHeading>
+              <HeartStatsBoxScoreTable
+                title={selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
+                players={heartResults.team}
+                accent
+              />
+              {heartResults.opponent && (
+                <HeartStatsBoxScoreTable title={selected.opponent ?? "OPPONENT"} players={heartResults.opponent} accent={false} />
+              )}
             </div>
-          </div>
-        </>
-      )}
 
-      {selected && selected.annotationKind === "heart_stats" && heartResults && (
-        <>
-          <div className="mt-8">
-            <span className="hs-chip !border-[#ff6b6b]/40 !text-[#ff9b9b]">HEART STATS PROJECT</span>
-            <p className="mt-2 max-w-lg text-xs leading-relaxed text-text-faint">
-              Hustle/effort plays only — no official score, shot chart, or
-              playing-time tracking applies to this package.
-            </p>
-          </div>
-
-          <div className="mt-8 flex flex-col gap-6">
-            <h2 className="font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              HEART STATS BOX SCORE
-            </h2>
-            <HeartStatsBoxScoreTable
-              title={selected.scope === "Both Teams" ? "YOUR TEAM" : "TEAM"}
-              players={heartResults.team}
-            />
-            {heartResults.opponent && (
-              <HeartStatsBoxScoreTable title={selected.opponent ?? "OPPONENT"} players={heartResults.opponent} />
-            )}
-          </div>
-
-          <div className="mt-10">
-            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              TAGGED CLIPS
-            </h2>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {heartResults.clips.map((c) => (
-                <ClipCard key={c.id} projectId={selected.id} clip={c} />
-              ))}
+            <div className="mt-10">
+              <SectionHeading>TAGGED CLIPS</SectionHeading>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {heartResults.clips.map((c, i) => (
+                  <ClipCard key={c.id} projectId={selected.id} clip={c} index={i} />
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div className="mt-10 mb-2">
-            <h2 className="mb-4 font-mono-tech text-[0.66rem] tracking-[0.2em] text-text-soft">
-              REPORTS
-            </h2>
-            <div className="flex flex-wrap gap-3">
-              <button onClick={handleDownloadHeartStatsBoxScore} className="hs-btn-secondary">
-                DOWNLOAD BOX SCORE (CSV)
-              </button>
-              <button onClick={handleDownloadEventLog} className="hs-btn-secondary">
-                DOWNLOAD EVENT LOG (CSV)
-              </button>
+            <div className="mt-10 mb-2">
+              <SectionHeading>REPORTS</SectionHeading>
+              <div className="flex flex-wrap gap-3">
+                <button onClick={handleDownloadHeartStatsBoxScore} className="hs-btn-secondary">
+                  DOWNLOAD BOX SCORE (CSV)
+                </button>
+                <button onClick={handleDownloadEventLog} className="hs-btn-secondary">
+                  DOWNLOAD EVENT LOG (CSV)
+                </button>
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
