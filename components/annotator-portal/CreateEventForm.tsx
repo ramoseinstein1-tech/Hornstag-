@@ -160,13 +160,16 @@ export default function CreateEventForm({
   // values as the annotator keeps filling it in.
   const submitEventRef = useRef<() => Promise<void>>(async () => {});
 
-  // Q/R/W tagging hotkeys — Q and R both just submit (same logic the
+  // Q/R/W/E tagging hotkeys — Q and R both just submit (same logic the
   // SAVE EVENT button calls); they're two entry points distinguished by
   // which one matches the currently-selected event type, not two
   // different actions. W toggles the "Successful" checkbox — rendered
   // for shot types and Heart Stats' Box Out event alike (hasSuccessCheckbox).
-  // Ignored while focus is in a text input/textarea/select so typing in
-  // the custom-label field is never hijacked.
+  // E toggles My Team/Opposition, same as clicking the TEAM buttons
+  // (only shown, and only meaningful, on a Both-Teams project for a
+  // non-teamless event type). Ignored while focus is in a text
+  // input/textarea/select so typing in the custom-label field is never
+  // hijacked.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const tag = (document.activeElement?.tagName ?? "").toLowerCase();
@@ -179,11 +182,15 @@ export default function CreateEventForm({
       } else if (key === "w" && hasSuccessCheckbox) {
         e.preventDefault();
         setMade((prev) => !prev);
+      } else if (key === "e" && bothTeams && !isTeamless) {
+        e.preventDefault();
+        setTeamSide((prev) => (prev === "team" ? "opponent" : "team"));
+        setPlayerId("");
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isShotType, hasSuccessCheckbox]);
+  }, [isShotType, hasSuccessCheckbox, bothTeams, isTeamless]);
 
   function resetForm() {
     setEventType(emptyState.eventType);
