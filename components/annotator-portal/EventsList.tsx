@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Project, RosterPlayer } from "@/lib/portal/store";
 import type { AnnotationEvent, TeamSide } from "@/lib/portal/events";
-import { EVENT_TYPE_LABELS, SHOT_EVENT_TYPES } from "@/lib/portal/events";
+import { EVENT_TYPE_LABELS, OUTCOME_EVENT_TYPES, outcomeLabel } from "@/lib/portal/events";
 import { formatClockMMSS } from "@/lib/portal/segments";
 
 type Filter = "all" | "team" | "opponent";
@@ -77,7 +77,7 @@ export default function EventsList({
         )}
         {filtered.map((evt) => {
           const player = evt.teamSide && evt.playerId ? findPlayer(project, evt.teamSide, evt.playerId) : undefined;
-          const isShot = SHOT_EVENT_TYPES.includes(evt.eventType);
+          const hasOutcome = OUTCOME_EVENT_TYPES.includes(evt.eventType);
           return (
             <div key={evt.id} className="flex items-center justify-between gap-3 py-3 first:pt-0">
               <button
@@ -109,9 +109,9 @@ export default function EventsList({
                   </p>
                   <p className="mt-0.5 text-xs text-text-faint">
                     {evt.teamSide ? EVENT_TYPE_LABELS[evt.eventType] : "Game event"}
-                    {isShot && (
+                    {hasOutcome && (
                       <span className={evt.made ? "ml-1.5 text-orange-bright" : "ml-1.5 text-text-faint"}>
-                        · {evt.made ? "MADE" : "MISSED"}
+                        · {outcomeLabel(evt.eventType, evt.made)}
                       </span>
                     )}
                   </p>

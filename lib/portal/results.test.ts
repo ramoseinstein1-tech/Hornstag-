@@ -81,6 +81,9 @@ describe("computeHeartStatsBoxScore", () => {
       evt({ timestampSeconds: 3, eventType: "box_out", playerId: "player-1", made: true }),
       evt({ timestampSeconds: 4, eventType: "box_out", playerId: "player-1", made: false }),
       evt({ timestampSeconds: 5, eventType: "charge_drawn", playerId: "opp-1", teamSide: "opponent" }),
+      evt({ timestampSeconds: 6, eventType: "screen", playerId: "player-1", made: true }),
+      evt({ timestampSeconds: 7, eventType: "screen", playerId: "player-1", made: false }),
+      evt({ timestampSeconds: 8, eventType: "blown_by", playerId: "player-1" }),
     ];
     const [box] = computeHeartStatsBoxScore([player1], events, "team");
     expect(box.deflections).toBe(2);
@@ -88,6 +91,9 @@ describe("computeHeartStatsBoxScore", () => {
     expect(box.boxOutsWon).toBe(1);
     expect(box.boxOutsAttempted).toBe(2);
     expect(box.chargesDrawn).toBe(0);
+    expect(box.screensGood).toBe(1);
+    expect(box.screensAttempted).toBe(2);
+    expect(box.blowBysAllowed).toBe(1);
   });
 
   it("includes a roster player with zero events at zero, not omitted", () => {

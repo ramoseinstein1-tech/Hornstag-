@@ -40,7 +40,9 @@ export type EventType =
   | "charge_drawn"
   | "screen_assist"
   | "contested_shot"
-  | "box_out";
+  | "box_out"
+  | "blown_by"
+  | "screen";
 
 export const SHOT_EVENT_TYPES: readonly EventType[] = ["two_point", "three_point", "free_throw"];
 
@@ -50,7 +52,7 @@ export const SHOT_EVENT_TYPES: readonly EventType[] = ["two_point", "three_point
 export const TEAMLESS_EVENT_TYPES: readonly EventType[] = ["timeout"];
 
 /** Heart Stats package — hustle/effort plays tagged instead of a
- * traditional box score. All six are player-attributed like the
+ * traditional box score. All eight are player-attributed like the
  * existing types (nothing teamless). */
 export const HEART_STAT_EVENT_TYPES: readonly EventType[] = [
   "deflection",
@@ -59,13 +61,17 @@ export const HEART_STAT_EVENT_TYPES: readonly EventType[] = [
   "screen_assist",
   "contested_shot",
   "box_out",
+  "blown_by",
+  "screen",
 ];
 
-/** Box Out is the one Heart Stat with a successful/missed outcome —
- * reuses the same "made"-checkbox UI shot types get (and the W
- * hotkey), just without the court diagram since shot location doesn't
- * apply. */
+/** Box Out and Screen both have a successful/missed outcome — they
+ * reuse the same "made"-checkbox UI shot types get (and the W hotkey),
+ * just without the court diagram since shot location doesn't apply to
+ * either. */
 export const BOX_OUT_EVENT_TYPE: EventType = "box_out";
+export const SCREEN_EVENT_TYPE: EventType = "screen";
+export const OUTCOME_EVENT_TYPES: readonly EventType[] = [...SHOT_EVENT_TYPES, BOX_OUT_EVENT_TYPE, SCREEN_EVENT_TYPE];
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   two_point: "Two Point",
@@ -91,7 +97,18 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   screen_assist: "Screen Assist",
   contested_shot: "Contested Shot",
   box_out: "Box Out",
+  blown_by: "Blown By",
+  screen: "Screen",
 };
+
+/** Label for the outcome of an OUTCOME_EVENT_TYPES event — shots read
+ * MADE/MISSED, Box Out reads WON/LOST, Screen reads GOOD/BAD, matching
+ * how each is actually described courtside. */
+export function outcomeLabel(eventType: EventType, made: boolean | undefined): string {
+  if (eventType === "box_out") return made ? "WON" : "LOST";
+  if (eventType === "screen") return made ? "GOOD" : "BAD";
+  return made ? "MADE" : "MISSED";
+}
 
 /** matches Project.roster vs Project.opponentRoster — simpler than
  * inventing a fake teamId, since no separate Team entity exists. */

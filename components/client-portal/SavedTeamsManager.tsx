@@ -422,6 +422,8 @@ export default function SavedTeamsManager() {
                         <StatBox label="SCREEN AST" value={profileStats.screenAssists} />
                         <StatBox label="CONTESTED" value={profileStats.contestedShots} />
                         <StatBox label="BOX OUTS" value={`${profileStats.boxOutsWon}/${profileStats.boxOutsAttempted}`} />
+                        <StatBox label="SCREENS" value={`${profileStats.screensGood}/${profileStats.screensAttempted}`} />
+                        <StatBox label="BLOWN BY" value={profileStats.blowBysAllowed} />
                       </div>
                     )}
                   </div>

@@ -31,6 +31,8 @@ const HEART_STATS_ROWS: Row[] = [
   { label: "Screen Ast", types: ["screen_assist"], color: "#8a7cff" },
   { label: "Contested", types: ["contested_shot"], color: "#d4e05e" },
   { label: "Box Outs", types: ["box_out"], madeColored: true, color: "var(--orange)" },
+  { label: "Screens", types: ["screen"], madeColored: true, color: "#ffb454" },
+  { label: "Blow Bys", types: ["blown_by"], color: "#ff6b6b" },
   { label: "Other", types: ["custom"], color: "var(--text-faint)" },
 ];
 

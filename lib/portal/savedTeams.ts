@@ -111,6 +111,9 @@ export type PlayerCareerStats = {
   contestedShots: number;
   boxOutsWon: number;
   boxOutsAttempted: number;
+  screensGood: number;
+  screensAttempted: number;
+  blowBysAllowed: number;
   /** One entry per completed traditional game this player appeared in,
    * oldest first — drives the points-per-game trend sparkline on the
    * player's profile. Empty for a player with no traditional games. */
@@ -121,7 +124,8 @@ function emptyCareerStats(): PlayerCareerStats {
   return {
     gamesPlayed: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, tov: 0, fgm: 0, fga: 0, tpm: 0, tpa: 0,
     heartStatsGamesPlayed: 0, deflections: 0, looseBallsRecovered: 0, chargesDrawn: 0,
-    screenAssists: 0, contestedShots: 0, boxOutsWon: 0, boxOutsAttempted: 0, gameLog: [],
+    screenAssists: 0, contestedShots: 0, boxOutsWon: 0, boxOutsAttempted: 0,
+    screensGood: 0, screensAttempted: 0, blowBysAllowed: 0, gameLog: [],
   };
 }
 
@@ -167,6 +171,9 @@ export async function getPlayerCareerStats(savedPlayerId: string): Promise<Playe
       stats.contestedShots += box.contestedShots;
       stats.boxOutsWon += box.boxOutsWon;
       stats.boxOutsAttempted += box.boxOutsAttempted;
+      stats.screensGood += box.screensGood;
+      stats.screensAttempted += box.screensAttempted;
+      stats.blowBysAllowed += box.blowBysAllowed;
     } else {
       const [box] = computeBoxScoreForSide([rosterPlayer], events, [], "team");
       stats.gamesPlayed += 1;

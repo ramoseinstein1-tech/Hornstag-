@@ -45,8 +45,14 @@ function sumHeartStats(players: PlayerHeartStatsBoxScore[]) {
       contestedShots: sum.contestedShots + p.contestedShots,
       boxOutsWon: sum.boxOutsWon + p.boxOutsWon,
       boxOutsAttempted: sum.boxOutsAttempted + p.boxOutsAttempted,
+      screensGood: sum.screensGood + p.screensGood,
+      screensAttempted: sum.screensAttempted + p.screensAttempted,
+      blowBysAllowed: sum.blowBysAllowed + p.blowBysAllowed,
     }),
-    { deflections: 0, looseBallsRecovered: 0, chargesDrawn: 0, screenAssists: 0, contestedShots: 0, boxOutsWon: 0, boxOutsAttempted: 0 }
+    {
+      deflections: 0, looseBallsRecovered: 0, chargesDrawn: 0, screenAssists: 0, contestedShots: 0,
+      boxOutsWon: 0, boxOutsAttempted: 0, screensGood: 0, screensAttempted: 0, blowBysAllowed: 0,
+    }
   );
 }
 
@@ -60,6 +66,8 @@ function HeartStatsHero({ project, heartResults }: { project: Project; heartResu
     ["SCREEN AST", yourSum.screenAssists],
     ["CONTESTED", yourSum.contestedShots],
     ["BOX OUTS", yourSum.boxOutsWon],
+    ["GOOD SCREENS", yourSum.screensGood],
+    ["BLOWN BY", yourSum.blowBysAllowed],
   ];
   const oppTiles: [string, number][] | null = oppSum
     ? [
@@ -69,6 +77,8 @@ function HeartStatsHero({ project, heartResults }: { project: Project; heartResu
         ["SCREEN AST", oppSum.screenAssists],
         ["CONTESTED", oppSum.contestedShots],
         ["BOX OUTS", oppSum.boxOutsWon],
+        ["GOOD SCREENS", oppSum.screensGood],
+        ["BLOWN BY", oppSum.blowBysAllowed],
       ]
     : null;
 
@@ -131,7 +141,7 @@ function HeartStatsBoxScoreTable({ title, players, accent }: { title: string; pl
         <table className="w-full min-w-[640px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border text-left">
-              {["PLAYER", "DEFL", "LOOSE BALLS", "CHARGES", "SCREEN AST", "CONTESTED", "BOX OUTS"].map((h) => (
+              {["PLAYER", "DEFL", "LOOSE BALLS", "CHARGES", "SCREEN AST", "CONTESTED", "BOX OUTS", "SCREENS", "BLOWN BY"].map((h) => (
                 <th key={h} className="pb-2 pr-4 font-mono-tech text-[0.6rem] tracking-[0.1em] text-text-faint">
                   {h}
                 </th>
@@ -152,6 +162,10 @@ function HeartStatsBoxScoreTable({ title, players, accent }: { title: string; pl
                 <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">
                   {p.boxOutsWon}/{p.boxOutsAttempted}
                 </td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">
+                  {p.screensGood}/{p.screensAttempted}
+                </td>
+                <td className="py-2.5 pr-4 font-mono-tech tabular-nums text-text-muted">{p.blowBysAllowed}</td>
               </tr>
             ))}
           </tbody>
@@ -512,7 +526,10 @@ export default function ResultsPage() {
     return activeClips.map((c) => [c.time, c.label, c.player, `${c.confidence}%`]);
   }
 
-  const HEART_STATS_BOX_SCORE_HEADERS = ["TEAM", "PLAYER", "DEFL", "LOOSE BALLS", "CHARGES", "SCREEN AST", "CONTESTED", "BOX OUTS WON", "BOX OUTS ATTEMPTED"];
+  const HEART_STATS_BOX_SCORE_HEADERS = [
+    "TEAM", "PLAYER", "DEFL", "LOOSE BALLS", "CHARGES", "SCREEN AST", "CONTESTED",
+    "BOX OUTS WON", "BOX OUTS ATTEMPTED", "SCREENS GOOD", "SCREENS ATTEMPTED", "BLOWN BY",
+  ];
 
   function heartStatsBoxScoreRows(): (string | number)[][] {
     if (!selected || !heartResults) return [];
@@ -529,6 +546,9 @@ export default function ResultsPage() {
           p.contestedShots,
           p.boxOutsWon,
           p.boxOutsAttempted,
+          p.screensGood,
+          p.screensAttempted,
+          p.blowBysAllowed,
         ])
       );
     };

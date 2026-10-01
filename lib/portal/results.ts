@@ -84,6 +84,7 @@ export function computeHeartStatsBoxScore(
   return roster.map((p) => {
     const own = events.filter((e) => e.teamSide === teamSide && e.playerId === p.id);
     const boxOuts = own.filter((e) => e.eventType === "box_out");
+    const screens = own.filter((e) => e.eventType === "screen");
 
     return {
       number: p.number,
@@ -95,6 +96,9 @@ export function computeHeartStatsBoxScore(
       contestedShots: own.filter((e) => e.eventType === "contested_shot").length,
       boxOutsWon: boxOuts.filter((e) => e.made).length,
       boxOutsAttempted: boxOuts.length,
+      screensGood: screens.filter((e) => e.made).length,
+      screensAttempted: screens.length,
+      blowBysAllowed: own.filter((e) => e.eventType === "blown_by").length,
     };
   });
 }

@@ -9,6 +9,7 @@ import {
   TEAMLESS_EVENT_TYPES,
   HEART_STAT_EVENT_TYPES,
   BOX_OUT_EVENT_TYPE,
+  SCREEN_EVENT_TYPE,
   type AnnotationEvent,
   type EventType,
   type NewEventInput,
@@ -146,11 +147,26 @@ export default function CreateEventForm({
   const roster = teamSide === "team" ? project.roster : project.opponentRoster ?? [];
   const isShotType = eventType !== "" && SHOT_EVENT_TYPES.includes(eventType);
   const isBoxOut = eventType === BOX_OUT_EVENT_TYPE;
-  // Box Out gets the same "Successful" checkbox a shot type gets (and
-  // the W hotkey toggles it the same way) — it just skips the court
-  // diagram below, since shot location doesn't apply.
-  const hasSuccessCheckbox = isShotType || isBoxOut;
+  const isScreen = eventType === SCREEN_EVENT_TYPE;
+  // Box Out and Screen both get the same "Successful" checkbox a shot
+  // type gets (and the W hotkey toggles it the same way) — they just
+  // skip the court diagram below, since shot location doesn't apply to
+  // either.
+  const hasSuccessCheckbox = isShotType || isBoxOut || isScreen;
+  const successLabel = isBoxOut ? "Successful box out" : isScreen ? "Good screen" : "Successful shot";
   const isTeamless = eventType !== "" && TEAMLESS_EVENT_TYPES.includes(eventType);
+
+  // Guards against an accidental double-submit (a hotkey held a beat too
+  // long, a double-click) producing two near-identical events a fraction
+  // of a second apart — the DB's exact-match unique index only catches a
+  // byte-for-byte duplicate, not two plays logged a moment apart while
+  // the video kept rolling. Soft-blocks a same player/type/outcome
+  // resubmission within a few seconds of video time and a few seconds of
+  // wall-clock time, but never permanently: submitting again confirms
+  // it's really a second, separate play.
+  const lastSavedRef = useRef<{ teamSide?: TeamSide; playerId?: string; eventType: EventType; made?: boolean; timestampSeconds: number; at: number } | null>(null);
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+  const submittingRef = useRef(false);
 
   // Always points at the current render's submitEvent — the keydown
   // listener below is only re-attached when isShotType changes, so
@@ -211,6 +227,7 @@ export default function CreateEventForm({
   // hotkeys (which have no real form-submit event to prevent-default on)
   // can call it directly.
   async function submitEvent() {
+    if (submittingRef.current) return;
     setError(null);
 
     const seconds = parseHHMMSS(timestampInput);
@@ -242,13 +259,43 @@ export default function CreateEventForm({
       gameClockSeconds: parseClockMMSS(gameClockInput) ?? undefined,
     };
 
+    if (!editingEvent && !confirmDuplicate) {
+      const last = lastSavedRef.current;
+      const looksIdentical =
+        last != null &&
+        last.teamSide === input.teamSide &&
+        last.playerId === input.playerId &&
+        last.eventType === input.eventType &&
+        last.made === input.made &&
+        Math.abs(seconds - last.timestampSeconds) <= 3 &&
+        Date.now() - last.at <= 8000;
+      if (looksIdentical) {
+        setError("This looks identical to the event you just saved a moment ago — press SAVE EVENT again to confirm it's a separate play.");
+        setConfirmDuplicate(true);
+        return;
+      }
+    }
+
+    submittingRef.current = true;
     const result = await onSave(input);
+    submittingRef.current = false;
+
     if (!result.ok) {
       // Inline error, inputs preserved — never a native alert(), and never
       // silently discards what the annotator just filled in.
       setError(result.error ?? "Couldn't save this event.");
       return;
     }
+
+    lastSavedRef.current = {
+      teamSide: input.teamSide,
+      playerId: input.playerId,
+      eventType: input.eventType,
+      made: input.made,
+      timestampSeconds: seconds,
+      at: Date.now(),
+    };
+    setConfirmDuplicate(false);
 
     if (editingEvent) onCancelEdit();
     resetForm();
@@ -444,7 +491,7 @@ export default function CreateEventForm({
               >
                 ✓
               </span>
-              <span className="text-sm text-text">{isBoxOut ? "Successful box out" : "Successful shot"}</span>
+              <span className="text-sm text-text">{successLabel}</span>
             </label>
 
             {isShotType && (

@@ -711,6 +711,14 @@ export type PlayerHeartStatsBoxScore = {
   contestedShots: number;
   boxOutsWon: number;
   boxOutsAttempted: number;
+  /** Every tagged Screen event, good or bad — distinct from
+   * screenAssists, which only counts a screen that directly led to a
+   * teammate's made basket. */
+  screensGood: number;
+  screensAttempted: number;
+  /** Times this player, as the defender, was beaten off the dribble —
+   * the one Heart Stat tracking a lapse rather than a hustle play. */
+  blowBysAllowed: number;
 };
 
 export type HeartStatsResults = {
