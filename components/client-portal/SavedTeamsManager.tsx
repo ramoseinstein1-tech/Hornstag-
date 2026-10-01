@@ -4,8 +4,14 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/components/auth/AuthProvider";
 import RosterEditor from "@/components/RosterEditor";
-import { createSavedTeam, deleteSavedTeam, getPlayerCareerStats, getSavedTeams } from "@/lib/portal/savedTeams";
-import type { PlayerCareerStats, SavedTeam } from "@/lib/portal/savedTeams";
+import {
+  createSavedTeam,
+  deleteSavedTeam,
+  getPlayerCareerStats,
+  getSavedTeams,
+  getTeamSeasonTrend,
+} from "@/lib/portal/savedTeams";
+import type { PlayerCareerStats, SavedTeam, TeamSeasonTrend } from "@/lib/portal/savedTeams";
 import type { RosterPlayer } from "@/lib/portal/store";
 
 function StatBox({ label, value }: { label: string; value: string | number }) {
@@ -14,6 +20,67 @@ function StatBox({ label, value }: { label: string; value: string | number }) {
       <div className="font-display text-base font-semibold text-orange-bright">{value}</div>
       <div className="mt-1 font-mono-tech text-[0.54rem] tracking-[0.1em] text-text-faint">{label}</div>
     </div>
+  );
+}
+
+/** Game-by-game margin bar chart — green above the zero line for a win,
+ * red below it for a loss, bar height scaled to the largest margin in
+ * the set so a blowout and a nail-biter are visually distinct. */
+function SeasonTrendChart({ games }: { games: TeamSeasonTrend["games"] }) {
+  const w = 22;
+  const gap = 6;
+  const h = 72;
+  const maxMargin = Math.max(1, ...games.map((g) => Math.abs(g.teamScore - g.oppScore)));
+  const width = games.length * (w + gap);
+
+  return (
+    <svg viewBox={`0 0 ${width} ${h}`} width={width} height={h} role="img" aria-label="Score margin per game">
+      <line x1={0} y1={h / 2} x2={width} y2={h / 2} stroke="var(--border)" strokeWidth={1} />
+      {games.map((g, i) => {
+        const margin = g.teamScore - g.oppScore;
+        const barH = Math.max(2, (Math.abs(margin) / maxMargin) * (h / 2 - 4));
+        const color = g.outcome === "team" ? "#7cd48a" : g.outcome === "opponent" ? "#ff9b9b" : "var(--orange-bright)";
+        const x = i * (w + gap);
+        const y = margin >= 0 ? h / 2 - barH : h / 2;
+        return (
+          <g key={g.projectId}>
+            <rect x={x} y={y} width={w} height={barH} rx={2} fill={color} fillOpacity={0.75} />
+            <title>{`${g.opponent ?? g.name}: ${g.teamScore}-${g.oppScore}`}</title>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/** Points-per-game sparkline for a single player's career, oldest game
+ * first — the last point is drawn larger and in the brand orange so the
+ * most recent game reads as the "current form" marker. */
+function PlayerTrendSparkline({ gameLog }: { gameLog: { date: string; pts: number }[] }) {
+  const w = 160;
+  const h = 40;
+  const pad = 4;
+  const max = Math.max(1, ...gameLog.map((g) => g.pts));
+  const step = gameLog.length > 1 ? (w - pad * 2) / (gameLog.length - 1) : 0;
+  const points = gameLog.map((g, i) => ({
+    x: pad + i * step,
+    y: h - pad - (g.pts / max) * (h - pad * 2),
+  }));
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} role="img" aria-label="Points per game trend">
+      <path d={path} fill="none" stroke="var(--orange)" strokeWidth={1.5} strokeOpacity={0.6} />
+      {points.map((p, i) => (
+        <circle
+          key={i}
+          cx={p.x}
+          cy={p.y}
+          r={i === points.length - 1 ? 3 : 2}
+          fill={i === points.length - 1 ? "var(--orange-bright)" : "var(--text-faint)"}
+        />
+      ))}
+    </svg>
   );
 }
 
@@ -35,6 +102,8 @@ export default function SavedTeamsManager() {
   ]);
   const [teamSaving, setTeamSaving] = useState(false);
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
+  const [seasonTrends, setSeasonTrends] = useState<Record<string, TeamSeasonTrend>>({});
+  const [seasonLoading, setSeasonLoading] = useState<string | null>(null);
 
   const [profilePlayer, setProfilePlayer] = useState<RosterPlayer | null>(null);
   const [profileStats, setProfileStats] = useState<PlayerCareerStats | null>(null);
@@ -48,6 +117,17 @@ export default function SavedTeamsManager() {
   function flashNotice(text: string, tone: "info" | "error" = "info") {
     setNotice({ text, tone });
     setTimeout(() => setNotice(null), 4000);
+  }
+
+  async function handleToggleTeam(teamId: string) {
+    const next = expandedTeamId === teamId ? null : teamId;
+    setExpandedTeamId(next);
+    if (next && !seasonTrends[next]) {
+      setSeasonLoading(next);
+      const trend = await getTeamSeasonTrend(next);
+      setSeasonLoading(null);
+      setSeasonTrends((prev) => ({ ...prev, [next]: trend }));
+    }
   }
 
   async function openPlayerProfile(player: RosterPlayer) {
@@ -134,7 +214,7 @@ export default function SavedTeamsManager() {
                 <li key={t.id} className="py-3 first:pt-0">
                   <div className="flex items-center justify-between gap-3">
                     <button
-                      onClick={() => setExpandedTeamId(expanded ? null : t.id)}
+                      onClick={() => handleToggleTeam(t.id)}
                       className="min-w-0 flex-1 text-left"
                     >
                       <p className="truncate text-sm text-text">
@@ -162,7 +242,37 @@ export default function SavedTeamsManager() {
                         transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                         className="overflow-hidden"
                       >
-                        <ul className="mt-3 flex flex-col gap-1.5 border-l border-border pl-4">
+                        <div className="mt-3 border-l border-border pl-4">
+                          <p className="mb-2 font-mono-tech text-[0.58rem] tracking-[0.14em] text-text-faint">
+                            SEASON TREND
+                          </p>
+                          {seasonLoading === t.id && (
+                            <p className="text-xs text-text-faint">Loading…</p>
+                          )}
+                          {seasonLoading !== t.id && seasonTrends[t.id] && seasonTrends[t.id].games.length === 0 && (
+                            <p className="text-xs text-text-faint">
+                              No completed traditional games with a recorded final score yet.
+                            </p>
+                          )}
+                          {seasonLoading !== t.id && seasonTrends[t.id] && seasonTrends[t.id].games.length > 0 && (
+                            <div className="flex flex-col gap-3">
+                              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-muted">
+                                <span>
+                                  <span className="text-[#7cd48a]">{seasonTrends[t.id].wins}W</span>
+                                  {" – "}
+                                  <span className="text-[#ff9b9b]">{seasonTrends[t.id].losses}L</span>
+                                  {seasonTrends[t.id].ties > 0 && <> – {seasonTrends[t.id].ties}T</>}
+                                </span>
+                                <span>{seasonTrends[t.id].avgPointsFor} PTS FOR</span>
+                                <span>{seasonTrends[t.id].avgPointsAgainst} PTS AGAINST</span>
+                              </div>
+                              <div className="overflow-x-auto">
+                                <SeasonTrendChart games={seasonTrends[t.id].games} />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <ul className="mt-4 flex flex-col gap-1.5 border-l border-border pl-4">
                           {t.roster.map((p) => (
                             <li key={p.id} className="flex items-center justify-between gap-3 text-sm">
                               <span className="text-text-muted">
@@ -288,6 +398,14 @@ export default function SavedTeamsManager() {
                     <p className="mt-2 font-mono-tech text-[0.56rem] tracking-[0.08em] text-text-faint">
                       TOTALS: {profileStats.pts} PTS · {profileStats.reb} REB · {profileStats.ast} AST
                     </p>
+                    {profileStats.gameLog.length > 1 && (
+                      <div className="mt-4">
+                        <p className="mb-1.5 font-mono-tech text-[0.54rem] tracking-[0.1em] text-text-faint">
+                          POINTS PER GAME
+                        </p>
+                        <PlayerTrendSparkline gameLog={profileStats.gameLog} />
+                      </div>
+                    )}
                   </div>
 
                   <div className="border-t border-border pt-5">

@@ -16,6 +16,7 @@
 
 import { createClient } from "@/lib/supabase/client";
 import type { AnnotationKind, RosterPlayer } from "./store";
+import { officialOutcome } from "./store";
 import { getEvents } from "./events";
 import { computeBoxScoreForSide, computeHeartStatsBoxScore } from "./results";
 
@@ -110,18 +111,22 @@ export type PlayerCareerStats = {
   contestedShots: number;
   boxOutsWon: number;
   boxOutsAttempted: number;
+  /** One entry per completed traditional game this player appeared in,
+   * oldest first — drives the points-per-game trend sparkline on the
+   * player's profile. Empty for a player with no traditional games. */
+  gameLog: { date: string; pts: number }[];
 };
 
 function emptyCareerStats(): PlayerCareerStats {
   return {
     gamesPlayed: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, tov: 0, fgm: 0, fga: 0, tpm: 0, tpa: 0,
     heartStatsGamesPlayed: 0, deflections: 0, looseBallsRecovered: 0, chargesDrawn: 0,
-    screenAssists: 0, contestedShots: 0, boxOutsWon: 0, boxOutsAttempted: 0,
+    screenAssists: 0, contestedShots: 0, boxOutsWon: 0, boxOutsAttempted: 0, gameLog: [],
   };
 }
 
 type CareerRosterRow = { id: string; project_id: string; number: string; name: string };
-type CareerProjectRow = { id: string; annotation_kind: AnnotationKind };
+type CareerProjectRow = { id: string; annotation_kind: AnnotationKind; game_date: string | null; created_at: string };
 
 export async function getPlayerCareerStats(savedPlayerId: string): Promise<PlayerCareerStats> {
   const supabase = createClient();
@@ -138,21 +143,21 @@ export async function getPlayerCareerStats(savedPlayerId: string): Promise<Playe
   // player's career totals rather than just being absent from them.
   const { data: projectRows } = await supabase
     .from("projects")
-    .select("id, annotation_kind")
+    .select("id, annotation_kind, game_date, created_at")
     .in("id", (rosterRows as CareerRosterRow[]).map((r) => r.project_id))
     .eq("status", "Completed");
   if (!projectRows || projectRows.length === 0) return stats;
 
-  const kindByProject = new Map((projectRows as CareerProjectRow[]).map((p) => [p.id, p.annotation_kind]));
+  const projectById = new Map((projectRows as CareerProjectRow[]).map((p) => [p.id, p]));
 
   for (const row of rosterRows as CareerRosterRow[]) {
-    const kind = kindByProject.get(row.project_id);
-    if (!kind) continue; // project not completed (or not visible to this caller)
+    const project = projectById.get(row.project_id);
+    if (!project) continue; // project not completed (or not visible to this caller)
 
     const events = await getEvents(row.project_id);
     const rosterPlayer: RosterPlayer = { id: row.id, number: row.number, name: row.name };
 
-    if (kind === "heart_stats") {
+    if (project.annotation_kind === "heart_stats") {
       const [box] = computeHeartStatsBoxScore([rosterPlayer], events, "team");
       stats.heartStatsGamesPlayed += 1;
       stats.deflections += box.deflections;
@@ -175,8 +180,100 @@ export async function getPlayerCareerStats(savedPlayerId: string): Promise<Playe
       stats.fga += box.fga;
       stats.tpm += box.tpm;
       stats.tpa += box.tpa;
+      stats.gameLog.push({ date: project.game_date ?? project.created_at, pts: box.pts });
     }
   }
 
+  stats.gameLog.sort((a, b) => a.date.localeCompare(b.date));
   return stats;
+}
+
+export type TeamSeasonGame = {
+  projectId: string;
+  name: string;
+  opponent?: string;
+  gameDate: string;
+  teamScore: number;
+  oppScore: number;
+  outcome: "team" | "opponent" | "tie";
+};
+
+export type TeamSeasonTrend = {
+  games: TeamSeasonGame[];
+  wins: number;
+  losses: number;
+  ties: number;
+  avgPointsFor: number;
+  avgPointsAgainst: number;
+};
+
+type SeasonProjectRow = {
+  id: string;
+  name: string;
+  opponent: string | null;
+  game_date: string | null;
+  created_at: string;
+  official_score_team: number | null;
+  official_score_opponent: number | null;
+};
+
+/** Every completed, traditional game at least one of this saved team's
+ * players was loaded into, oldest first — the data behind the Saved
+ * Teams page's season trend chart (score-over-time + win/loss record).
+ * Only games with a recorded official score count, since outcome and
+ * points-for/against are both read directly off that score rather than
+ * re-deriving them from annotation events. */
+export async function getTeamSeasonTrend(teamId: string): Promise<TeamSeasonTrend> {
+  const empty: TeamSeasonTrend = { games: [], wins: 0, losses: 0, ties: 0, avgPointsFor: 0, avgPointsAgainst: 0 };
+  const supabase = createClient();
+
+  const { data: players } = await supabase
+    .from("saved_team_players")
+    .select("id")
+    .eq("saved_team_id", teamId);
+  if (!players || players.length === 0) return empty;
+
+  const { data: rosterRows } = await supabase
+    .from("roster_players")
+    .select("project_id")
+    .in(
+      "saved_player_id",
+      (players as { id: string }[]).map((p) => p.id)
+    );
+  if (!rosterRows || rosterRows.length === 0) return empty;
+
+  const projectIds = Array.from(new Set((rosterRows as { project_id: string }[]).map((r) => r.project_id)));
+  const { data: projectRows } = await supabase
+    .from("projects")
+    .select("id, name, opponent, game_date, created_at, official_score_team, official_score_opponent")
+    .in("id", projectIds)
+    .eq("status", "Completed")
+    .eq("annotation_kind", "traditional")
+    .not("official_score_team", "is", null)
+    .not("official_score_opponent", "is", null);
+  if (!projectRows || projectRows.length === 0) return empty;
+
+  const games: TeamSeasonGame[] = (projectRows as SeasonProjectRow[])
+    .map((p) => {
+      const teamScore = p.official_score_team!;
+      const oppScore = p.official_score_opponent!;
+      return {
+        projectId: p.id,
+        name: p.name,
+        opponent: p.opponent ?? undefined,
+        gameDate: p.game_date ?? p.created_at,
+        teamScore,
+        oppScore,
+        outcome: officialOutcome({ team: teamScore, opponent: oppScore }),
+      };
+    })
+    .sort((a, b) => a.gameDate.localeCompare(b.gameDate));
+
+  const wins = games.filter((g) => g.outcome === "team").length;
+  const losses = games.filter((g) => g.outcome === "opponent").length;
+  const ties = games.filter((g) => g.outcome === "tie").length;
+  const avgPointsFor = Math.round(games.reduce((s, g) => s + g.teamScore, 0) / games.length);
+  const avgPointsAgainst = Math.round(games.reduce((s, g) => s + g.oppScore, 0) / games.length);
+
+  return { games, wins, losses, ties, avgPointsFor, avgPointsAgainst };
 }
