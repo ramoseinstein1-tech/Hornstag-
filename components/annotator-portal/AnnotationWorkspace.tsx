@@ -7,6 +7,7 @@ import { updateRoster, getProjectVideoUrl, type AnnotationStatus, type Project, 
 import {
   createEvent,
   deleteEvent,
+  deleteProjectEvents,
   getEvents,
   pointsForEvent,
   updateEvent,
@@ -17,6 +18,7 @@ import {
   getSegments,
   saveSegments,
   getSegmentClipUrl,
+  deleteProjectSegments,
   periodForTimestamp,
   startPeriodClock,
   pausePeriodClock,
@@ -112,7 +114,18 @@ export default function AnnotationWorkspace({
     annotationStatus === "Completed"
       ? "This match has been reviewed and completed — no further edits."
       : "Submitted for review — no further edits until QA responds.";
-  const tabs = readOnly ? TABS.filter((t) => t.key !== "roster" && t.key !== "segments") : TABS;
+  // Once any tagging has happened, re-entering Segments to move the
+  // period boundaries would silently invalidate every tag's period
+  // attribution — "Reverse Cutting" below is the explicit, confirmed
+  // way back in, not a tab click.
+  const hasTags = events.length > 0;
+  const tabs = readOnly
+    ? TABS.filter((t) => t.key !== "roster" && t.key !== "segments")
+    : hasTags
+      ? TABS.filter((t) => t.key !== "segments")
+      : TABS;
+  const [reverseArmed, setReverseArmed] = useState(false);
+  const [reversing, setReversing] = useState(false);
 
   // Real video, segments known, and at least one period still has no
   // cut clip — the condition the annotator must wait out before tagging.
@@ -299,6 +312,47 @@ export default function AnnotationWorkspace({
     void runCutting(newSegments);
   }
 
+  /** Switches tabs, and — only when coming back from one that unmounts
+   * the video player entirely (Live Stats, Roster, Issues) — primes
+   * playerSeekTarget so the freshly-remounted player resumes exactly
+   * where it left off instead of restarting at 0. Must happen in this
+   * same synchronous handler (not a later effect reacting to `tab`):
+   * VideoPlayer's own seek-on-load logic is captured once in a closure
+   * when it mounts, so the target has to already be correct in the very
+   * render that mounts it. */
+  function handleTabChange(key: Tab) {
+    const wasHidden = tab !== "annotate" && tab !== "segments";
+    const nowVisible = key === "annotate" || key === "segments";
+    if (wasHidden && nowVisible) {
+      const relative = key === "annotate" && activeClip ? currentTime - activeClip.offset : currentTime;
+      if (relative >= 0) setPlayerSeekTarget(relative);
+    }
+    setTab(key);
+  }
+
+  /** Undoes period cutting entirely — deletes every tagged event (if
+   * any) and every segment boundary, then drops back to a blank
+   * Segments tab. The only way back into Segments once tagging has
+   * started (see `hasTags` above), so it requires an explicit arm +
+   * confirm rather than a single click. */
+  async function handleReverseCutting() {
+    setReversing(true);
+    await deleteProjectEvents(currentProject.id);
+    await deleteProjectSegments(currentProject.id);
+    setEvents([]);
+    setSegments(null);
+    setActiveClip(null);
+    setPlayerSrc(videoUrl);
+    setPlayerSeekTarget(undefined);
+    setCuttingSettled(false);
+    setCuttingError(null);
+    setCuttingProgress(null);
+    hasAttemptedCuttingRef.current = false;
+    setReversing(false);
+    setReverseArmed(false);
+    setTab("segments");
+  }
+
   async function handleSelectSegment(index: number) {
     if (!segments) return;
     setActiveSegmentIndex(index);
@@ -454,7 +508,7 @@ export default function AnnotationWorkspace({
               key={t.key}
               type="button"
               disabled={locked}
-              onClick={() => !locked && setTab(t.key)}
+              onClick={() => !locked && handleTabChange(t.key)}
               title={locked ? (segments ? "Cutting into period clips — please wait" : "Segment the video first") : undefined}
               className={`relative px-4 py-3 font-mono-tech text-[0.64rem] tracking-[0.14em] transition-colors ${
                 locked
@@ -477,6 +531,46 @@ export default function AnnotationWorkspace({
           );
         })}
       </div>
+
+      {!readOnly && segments && segments.length > 0 && (
+        <div className="mt-3">
+          {!reverseArmed ? (
+            <button
+              type="button"
+              onClick={() => setReverseArmed(true)}
+              className="font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint transition-colors hover:text-[#ff9b9b]"
+            >
+              ⟲ REVERSE CUTTING
+            </button>
+          ) : (
+            <div
+              className="flex flex-wrap items-center gap-3 rounded-md border px-3 py-2.5"
+              style={{ borderColor: "rgba(255,107,107,0.3)", background: "rgba(255,107,107,0.06)" }}
+            >
+              <span className="font-mono-tech text-[0.58rem] leading-relaxed tracking-[0.06em] text-[#ff9b9b]">
+                {hasTags
+                  ? `Deletes all ${events.length} tagged event${events.length === 1 ? "" : "s"} and every period cut — you'll re-segment from scratch.`
+                  : "Deletes every period cut — you'll re-segment from scratch."}
+              </span>
+              <button
+                type="button"
+                onClick={handleReverseCutting}
+                disabled={reversing}
+                className="flex-none font-mono-tech text-[0.58rem] tracking-[0.1em] text-[#ff9b9b] underline disabled:opacity-50"
+              >
+                {reversing ? "REVERSING…" : "CONFIRM"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setReverseArmed(false)}
+                className="flex-none font-mono-tech text-[0.58rem] tracking-[0.1em] text-text-faint hover:text-text-muted"
+              >
+                CANCEL
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {(tab === "segments" || tab === "annotate") && (
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
