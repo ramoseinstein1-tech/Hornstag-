@@ -110,6 +110,12 @@ export default function Hero() {
             <a href="#workflow" className="hs-btn-secondary">
               SEE HOW IT WORKS
             </a>
+            <Link
+              href="/demo"
+              className="font-mono-tech text-[0.68rem] tracking-[0.14em] text-text-muted transition-colors hover:text-orange-bright"
+            >
+              VIEW SAMPLE REPORT →
+            </Link>
           </motion.div>
 
           <motion.dl
