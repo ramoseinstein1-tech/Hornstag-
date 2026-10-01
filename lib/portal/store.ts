@@ -16,6 +16,7 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
+import type { EventType } from "./events";
 
 export type ProjectStatus = "Processing" | "In Progress" | "Needs Review" | "Completed" | "Rejected";
 export type AnnotationScope = "Single Team" | "Both Teams";
@@ -89,6 +90,11 @@ export type Project = {
   completedAt?: string;
   createdAt: string;
   updatedAt: string;
+  /** R2 key of the generated "made shots + assists" highlight reel (see
+   * lib/portal/highlightReel.ts) — undefined until the client generates
+   * one from the Results page. */
+  highlightReelPath?: string;
+  highlightReelGeneratedAt?: string;
 };
 
 export type ActivityEntry = {
@@ -136,6 +142,8 @@ type ProjectRow = {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  highlight_reel_path: string | null;
+  highlight_reel_generated_at: string | null;
   roster_players: RosterRow[];
 };
 
@@ -181,6 +189,8 @@ function mapProjectRow(row: ProjectRow): Project {
     completedAt: row.completed_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    highlightReelPath: row.highlight_reel_path ?? undefined,
+    highlightReelGeneratedAt: row.highlight_reel_generated_at ?? undefined,
   };
 }
 
@@ -374,6 +384,17 @@ export async function deleteProject(projectId: string): Promise<{ ok: true } | {
 export async function updateScoreCheckNote(projectId: string, note: string): Promise<void> {
   const supabase = createClient();
   await supabase.from("projects").update({ score_check_note: note.trim() || null }).eq("id", projectId);
+}
+
+/** Records a generated highlight reel's storage path against its project
+ * — relies on the "clients update own projects" RLS policy, same as
+ * every other owner-writable project field. */
+export async function setHighlightReelPath(projectId: string, key: string): Promise<void> {
+  const supabase = createClient();
+  await supabase
+    .from("projects")
+    .update({ highlight_reel_path: key, highlight_reel_generated_at: new Date().toISOString() })
+    .eq("id", projectId);
 }
 
 /** Games this annotator worked on that reached Completed status within
@@ -661,6 +682,10 @@ export type TaggedClip = {
    * the "not available" placeholder. */
   clipPath?: string;
   clipOffsetSeconds?: number;
+  /** The underlying event's raw type/outcome — lets lib/portal/highlightReel.ts
+   * select "made shots + assists" without re-parsing the display label. */
+  eventType: EventType;
+  made?: boolean;
 };
 
 export type ShotChartPoint = { x: number; y: number; made: boolean };
@@ -733,7 +758,16 @@ function genPlayerStats(p: RosterPlayer, rand: () => number): PlayerBoxScore {
   };
 }
 
-const EVENT_POOL = ["SHOT ATTEMPT", "3PT MADE", "REBOUND", "ASSIST", "STEAL", "BLOCK", "TURNOVER", "FOUL"];
+const EVENT_POOL: { label: string; eventType: EventType; made?: boolean }[] = [
+  { label: "SHOT ATTEMPT", eventType: "two_point", made: false },
+  { label: "3PT MADE", eventType: "three_point", made: true },
+  { label: "REBOUND", eventType: "defensive_rebound" },
+  { label: "ASSIST", eventType: "assist" },
+  { label: "STEAL", eventType: "steal" },
+  { label: "BLOCK", eventType: "block" },
+  { label: "TURNOVER", eventType: "turnover" },
+  { label: "FOUL", eventType: "foul" },
+];
 
 function genClips(project: Project, rand: () => number): TaggedClip[] {
   const players = [...project.roster, ...(project.opponentRoster ?? [])];
@@ -748,12 +782,15 @@ function genClips(project: Project, rand: () => number): TaggedClip[] {
     const period = periods[Math.floor(rand() * periods.length)];
     const minutes = String(Math.floor(rand() * 12)).padStart(2, "0");
     const seconds = String(Math.floor(rand() * 60)).padStart(2, "0");
+    const event = EVENT_POOL[Math.floor(rand() * EVENT_POOL.length)];
     clips.push({
       id: `clip-${i}`,
-      label: EVENT_POOL[Math.floor(rand() * EVENT_POOL.length)],
+      label: event.label,
       time: `${period} ${minutes}:${seconds}`,
       player: `#${player.number} ${player.name}`,
       confidence: Math.round((90 + rand() * 9.5) * 10) / 10,
+      eventType: event.eventType,
+      made: event.made,
     });
   }
 

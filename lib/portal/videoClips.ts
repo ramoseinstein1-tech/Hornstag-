@@ -31,11 +31,11 @@ import type { FFmpeg } from "@ffmpeg/ffmpeg";
 // which can't parse the umd build's non-ESM syntax.
 const FFMPEG_CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm";
 
-function extensionOf(path: string): string {
+export function extensionOf(path: string): string {
   return path.includes(".") ? path.split(".").pop()!.toLowerCase() : "mp4";
 }
 
-function mimeForExtension(ext: string): string {
+export function mimeForExtension(ext: string): string {
   if (ext === "mov") return "video/quicktime";
   if (ext === "webm") return "video/webm";
   return "video/mp4";

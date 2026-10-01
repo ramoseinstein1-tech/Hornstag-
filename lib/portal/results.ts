@@ -138,6 +138,8 @@ export function computeClips(project: Project, events: AnnotationEvent[], segmen
         verified: true,
         clipPath: seg?.clipPath,
         clipOffsetSeconds: seg?.clipPath ? e.timestampSeconds - seg.startSeconds : undefined,
+        eventType: e.eventType,
+        made: e.made,
       };
     });
 }

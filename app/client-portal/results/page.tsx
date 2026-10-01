@@ -23,6 +23,7 @@ import type {
 import { computeRealResults, computeRealHeartStatsResults, hasRealAnnotationData } from "@/lib/portal/results";
 import { getSegments, getSegmentClipUrl, formatClockMMSS, type VideoSegment } from "@/lib/portal/segments";
 import { getVideoIssues, ISSUE_TYPE_LABELS, type VideoIssue } from "@/lib/portal/videoIssues";
+import { generateHighlightReel, selectHighlightClips, type HighlightProgress } from "@/lib/portal/highlightReel";
 import ShotChart from "@/components/client-portal/ShotChart";
 import {
   fgPctOf,
@@ -367,6 +368,10 @@ export default function ResultsPage() {
   const [heartResults, setHeartResults] = useState<HeartStatsResults | null>(null);
   const [periodClips, setPeriodClips] = useState<VideoSegment[]>([]);
   const [videoIssues, setVideoIssues] = useState<VideoIssue[]>([]);
+  const [reelUrl, setReelUrl] = useState<string | null>(null);
+  const [reelGenerating, setReelGenerating] = useState(false);
+  const [reelProgress, setReelProgress] = useState<HighlightProgress | null>(null);
+  const [reelError, setReelError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -421,6 +426,47 @@ export default function ResultsPage() {
       cancelled = true;
     };
   }, [selected]);
+
+  useEffect(() => {
+    setReelError(null);
+    if (!selected?.highlightReelPath) {
+      setReelUrl(null);
+      return;
+    }
+    let cancelled = false;
+    getSegmentClipUrl(selected.id, selected.highlightReelPath).then((url) => {
+      if (!cancelled) setReelUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  async function handleGenerateReel() {
+    if (!selected || !results) return;
+    setReelGenerating(true);
+    setReelError(null);
+    setReelProgress({ index: 0, total: selectHighlightClips(results.clips).length });
+
+    const result = await generateHighlightReel(selected, results.clips, setReelProgress);
+
+    setReelGenerating(false);
+    setReelProgress(null);
+
+    if (!result.ok) {
+      setReelError(result.error);
+      return;
+    }
+    setAllProjects((prev) =>
+      prev.map((p) =>
+        p.id === selected.id
+          ? { ...p, highlightReelPath: result.key, highlightReelGeneratedAt: new Date().toISOString() }
+          : p
+      )
+    );
+    const url = await getSegmentClipUrl(selected.id, result.key);
+    setReelUrl(url);
+  }
 
   const yourTotals = useMemo(() => (results ? teamTotals(results.team) : null), [results]);
   const oppTotals = useMemo(
@@ -686,6 +732,57 @@ export default function ResultsPage() {
                 )}
               </div>
             </div>
+
+            {(selected.highlightReelPath || selectHighlightClips(results.clips).length > 0) && (
+              <div className="mt-10">
+                <SectionHeading>HIGHLIGHT REEL</SectionHeading>
+                <div className="hs-panel sheen-top p-5">
+                  {reelUrl ? (
+                    <div className="flex flex-col gap-4">
+                      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                      <video src={reelUrl} controls className="w-full rounded border border-border" />
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="font-mono-tech text-[0.6rem] tracking-[0.08em] text-text-faint">
+                          EVERY MADE SHOT &amp; ASSIST WITH A TAGGED CLIP, IN GAME ORDER
+                        </p>
+                        <button
+                          onClick={handleGenerateReel}
+                          disabled={reelGenerating}
+                          className="hs-btn-secondary disabled:opacity-60"
+                        >
+                          {reelGenerating
+                            ? reelProgress
+                              ? `CUTTING ${reelProgress.index + 1}/${reelProgress.total}…`
+                              : "GENERATING…"
+                            : "REGENERATE"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 py-4 text-center">
+                      <p className="max-w-sm text-sm text-text-muted">
+                        Stitch every made shot and assist with a tagged clip
+                        into one video, in game order.
+                      </p>
+                      <button
+                        onClick={handleGenerateReel}
+                        disabled={reelGenerating}
+                        className="hs-btn-primary disabled:opacity-60"
+                      >
+                        {reelGenerating
+                          ? reelProgress
+                            ? `CUTTING ${reelProgress.index + 1}/${reelProgress.total}…`
+                            : "GENERATING…"
+                          : "GENERATE HIGHLIGHT REEL"}
+                      </button>
+                    </div>
+                  )}
+                  {reelError && (
+                    <p className="mt-3 font-mono-tech text-[0.62rem] tracking-wide text-[#ff6b6b]">{reelError}</p>
+                  )}
+                </div>
+              </div>
+            )}
 
             {periodClips.length > 0 && (
               <div className="mt-10">
