@@ -355,7 +355,14 @@ export default function CreateEventForm({
             id="evt-type"
             className="hs-input"
             value={eventType}
-            onChange={(e) => setEventType(e.target.value as EventType | "")}
+            onChange={(e) => {
+              setEventType(e.target.value as EventType | "");
+              // Picking a value leaves this <select> focused, which the
+              // hotkey guards above treat as "typing" and block every
+              // hotkey until the annotator clicks blank space — blurring
+              // here means a hotkey works immediately after a selection.
+              e.target.blur();
+            }}
           >
             <option value="" disabled>
               Select event type…
@@ -375,7 +382,10 @@ export default function CreateEventForm({
               id="evt-player"
               className="hs-input"
               value={playerId}
-              onChange={(e) => setPlayerId(e.target.value)}
+              onChange={(e) => {
+                setPlayerId(e.target.value);
+                e.target.blur();
+              }}
             >
               <option value="">Select player…</option>
               {roster.map((p) => (
