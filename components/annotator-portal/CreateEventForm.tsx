@@ -103,7 +103,6 @@ export default function CreateEventForm({
   // The inline court is only ever as wide as this form's column, which is
   // too cramped to place a shot marker precisely — editing happens in a
   // large modal instead; this just shows the current pick (or a prompt).
-  const [courtModalOpen, setCourtModalOpen] = useState(false);
 
   // Auto-populate from live video position until the user edits the field
   // manually, or an existing event is loaded for editing.
@@ -257,7 +256,6 @@ export default function CreateEventForm({
   submitEventRef.current = submitEvent;
 
   return (
-    <>
     <form onSubmit={handleSubmit} className="hs-panel sheen-top flex flex-col gap-4 p-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
@@ -442,20 +440,7 @@ export default function CreateEventForm({
             {isShotType && (
               <div>
                 <span className="hs-label">SHOT LOCATION</span>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setCourtModalOpen(true)}
-                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setCourtModalOpen(true))}
-                  className="cursor-pointer rounded-md ring-orange/50 transition-shadow hover:ring-2"
-                >
-                  <div className="pointer-events-none">
-                    <CourtDiagram value={shotLocation} onChange={() => {}} disabled />
-                  </div>
-                  <p className="mt-1.5 font-mono-tech text-[0.58rem] tracking-[0.1em] text-orange-bright">
-                    {shotLocation ? "TAP TO ADJUST — OPENS LARGER" : "TAP TO SET SHOT LOCATION"}
-                  </p>
-                </div>
+                <CourtDiagram value={shotLocation} onChange={setShotLocation} />
               </div>
             )}
           </motion.div>
@@ -487,38 +472,5 @@ export default function CreateEventForm({
         </button>
       </div>
     </form>
-
-    <AnimatePresence>
-      {courtModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm"
-          onClick={() => setCourtModalOpen(false)}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.97 }}
-            transition={{ duration: 0.2 }}
-            onClick={(e) => e.stopPropagation()}
-            className="hs-panel sheen-top w-full max-w-4xl p-6"
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <p className="font-mono-tech text-[0.62rem] tracking-[0.16em] text-text-faint">
-                CLICK OR DRAG TO SET THE SHOT LOCATION
-              </p>
-              <button
-                type="button"
-                onClick={() => setCourtModalOpen(false)}
-                className="hs-btn-primary !py-2"
-              >
-                DONE
-              </button>
-            </div>
-            <CourtDiagram value={shotLocation} onChange={setShotLocation} />
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
-    </>
   );
 }

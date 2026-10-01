@@ -218,9 +218,9 @@ export default function AnnotationWorkspace({
         e.preventDefault();
         player.togglePlay();
       } else if (e.key.toLowerCase() === "a") {
-        player.seekTo(Math.max(0, player.getCurrentTime() - 5));
+        player.seekTo(Math.max(0, player.getCurrentTime() - 2));
       } else if (e.key.toLowerCase() === "d") {
-        player.seekTo(player.getCurrentTime() + 5);
+        player.seekTo(player.getCurrentTime() + 2);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
