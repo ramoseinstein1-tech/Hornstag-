@@ -21,6 +21,7 @@ import {
   startPeriodClock,
   pausePeriodClock,
   resumePeriodClock,
+  computeGameClockSeconds,
   type VideoSegment,
 } from "@/lib/portal/segments";
 import { cutProjectIntoClips, type ClipProgress } from "@/lib/portal/videoClips";
@@ -199,17 +200,31 @@ export default function AnnotationWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
-  // Space/A/D video-control hotkeys — only while actively tagging (the
-  // Annotate tab, not read-only). Q/R/W (submit event / toggle
-  // successful) live in CreateEventForm itself, since that's what owns
-  // that form's state. Ignored entirely while focus is in a text
-  // input/textarea/select, so typing in the custom-label field or
-  // anywhere else never gets hijacked.
+  // Space/A/D video-control hotkeys, and F for the game clock — only
+  // while actively tagging (the Annotate tab, not read-only). Q/R/W
+  // (submit event / toggle successful) live in CreateEventForm itself,
+  // since that's what owns that form's state. Ignored entirely while
+  // focus is in a text input/textarea/select, so typing in the
+  // custom-label field or anywhere else never gets hijacked.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (tab !== "annotate" || readOnly) return;
       const tag = (document.activeElement?.tagName ?? "").toLowerCase();
       if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+      if (e.key.toLowerCase() === "f") {
+        // Only toggles an already-started clock — starting one needs a
+        // typed period length, which F has no value to guess at.
+        const seg = segments?.[activeSegmentIndex];
+        if (!seg || seg.clockReferenceVideoSeconds == null) return;
+        e.preventDefault();
+        if (seg.clockRunning) {
+          handlePauseClock(computeGameClockSeconds(seg, currentTime) ?? 0);
+        } else {
+          handleResumeClock();
+        }
+        return;
+      }
 
       const player = videoRef.current;
       if (!player) return;
@@ -225,7 +240,7 @@ export default function AnnotationWorkspace({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [tab, readOnly]);
+  }, [tab, readOnly, segments, activeSegmentIndex, currentTime]);
 
   const teamScore = useMemo(
     () => events.filter((e) => e.teamSide === "team").reduce((sum, e) => sum + pointsForEvent(e), 0),
